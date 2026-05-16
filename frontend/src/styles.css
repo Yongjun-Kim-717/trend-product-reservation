@@ -1195,3 +1195,54 @@ input:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.admin-controls-row {
+  align-items: flex-end;
+}
+
+.admin-control-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.resolution-cell {
+  max-width: 260px;
+  color: #52616f;
+  line-height: 1.45;
+}
+
+.admin-rule-list {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-rule-list div {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid #e3eae7;
+  border-radius: 8px;
+  background: #f8faf9;
+}
+
+.admin-rule-list strong {
+  color: #1f2933;
+}
+
+.admin-rule-list span {
+  color: #5f6f7c;
+  line-height: 1.5;
+}
+
+@media (max-width: 900px) {
+  .admin-control-group,
+  .admin-controls-row {
+    justify-content: stretch;
+  }
+
+  .compact-field {
+    min-width: 100%;
+  }
+}

@@ -93,17 +93,17 @@ export const adminKeywords = [
 ];
 
 export const adminUnmappedSearches = [
-  { id: 1, rawQuery: "버터 떡 파는곳", count: 24, lastSeenAt: "2026-05-16 17:10", status: "REVIEW" },
-  { id: 2, rawQuery: "두쫀쿠 예약", count: 16, lastSeenAt: "2026-05-16 16:42", status: "REVIEW" },
-  { id: 3, rawQuery: "요즘 약과쿠키", count: 9, lastSeenAt: "2026-05-16 15:58", status: "REVIEW" },
-  { id: 4, rawQuery: "신상 크림떡", count: 6, lastSeenAt: "2026-05-16 14:12", status: "HOLD" },
+  { id: 1, rawQuery: "버터 떡 파는곳", count: 24, lastSeenAt: "2026-05-16 17:10", status: "REVIEW", resolution: null },
+  { id: 2, rawQuery: "두쫀쿠 예약", count: 16, lastSeenAt: "2026-05-16 16:42", status: "REVIEW", resolution: null },
+  { id: 3, rawQuery: "요즘 약과쿠키", count: 9, lastSeenAt: "2026-05-16 15:58", status: "REVIEW", resolution: null },
+  { id: 4, rawQuery: "신상 크림떡", count: 6, lastSeenAt: "2026-05-16 14:12", status: "HOLD", resolution: "검색량 증가 시 재검토" },
 ];
 
 export const adminSearchLogs = [
-  { id: 1, rawQuery: "버터떡", keywordName: "버터떡", createdAt: "2026-05-16 17:20" },
-  { id: 2, rawQuery: "버터 떡 맛집", keywordName: "버터떡", createdAt: "2026-05-16 17:12" },
-  { id: 3, rawQuery: "두쫀쿠", keywordName: "두쫀쿠", createdAt: "2026-05-16 16:55" },
-  { id: 4, rawQuery: "신상 크림떡", keywordName: "미매핑", createdAt: "2026-05-16 14:12" },
+  { id: 1, rawQuery: "버터떡", mappingStatus: "매핑 성공", keywordName: "버터떡", userRole: "소비자", location: "성수동", resultCount: 3, createdAt: "2026-05-16 17:20" },
+  { id: 2, rawQuery: "버터 떡 맛집", mappingStatus: "매핑 성공", keywordName: "버터떡", userRole: "소비자", location: "성수동", resultCount: 2, createdAt: "2026-05-16 17:12" },
+  { id: 3, rawQuery: "두쫀쿠", mappingStatus: "매핑 성공", keywordName: "두쫀쿠", userRole: "소비자", location: "홍대", resultCount: 1, createdAt: "2026-05-16 16:55" },
+  { id: 4, rawQuery: "신상 크림떡", mappingStatus: "미매핑", keywordName: "-", userRole: "소비자", location: "강남", resultCount: 0, createdAt: "2026-05-16 14:12" },
 ];
 
 export function getProduct(productId) {
