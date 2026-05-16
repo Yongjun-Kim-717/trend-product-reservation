@@ -1132,3 +1132,66 @@ input:disabled {
   height: 100%;
   object-fit: cover;
 }
+
+.admin-grid-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: 18px;
+  align-items: start;
+}
+
+.admin-side-panel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid #dce4e0;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 20px;
+}
+
+.admin-side-panel h2 {
+  margin-bottom: 0;
+}
+
+.admin-side-panel ol {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding-left: 20px;
+  color: #52616f;
+  line-height: 1.55;
+}
+
+.compact-field {
+  min-width: 180px;
+}
+
+.alias-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.alias-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  border-radius: 999px;
+  background: #f1f5f3;
+  color: #40515f;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.empty-admin-section p {
+  margin: 0;
+  color: #5f6f7c;
+  line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+  .admin-grid-section {
+    grid-template-columns: 1fr;
+  }
+}
