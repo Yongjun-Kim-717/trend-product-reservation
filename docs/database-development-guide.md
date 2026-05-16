@@ -1,6 +1,6 @@
 ﻿# MariaDB 개발 가이드
 
-최종 수정일: 2026-05-16
+최종 수정일: 2026-05-17
 
 이 문서는 데이터베이스 담당 팀원이 현재 프론트엔드 구조와 호환되도록 MariaDB 스키마를 개발하기 위한 가이드이다.
 
@@ -28,9 +28,10 @@
 5. inventories로 매장-상품 재고 관계 설계
 6. reservations를 inventory_id 기준으로 설계
 7. keywords, keyword_aliases, search_logs, unmapped_searches 설계
-8. 관리자 승인/감사 로그 테이블은 시간이 남으면 추가
-9. schema.sql 실행 검증
-10. seed.sql 샘플 데이터 작성
+8. 예약 상태 변경 로그와 관리자 처리 이력 설계
+9. location_cache 등 검색 성능 보조 테이블 설계
+10. schema.sql 실행 검증
+11. seed.sql 샘플 데이터 작성
 ```
 
 ## 3. 사용자 테이블 설계
@@ -199,7 +200,9 @@ CREATE TABLE inventories (
 중요 검증 규칙:
 
 ```text
-reservable_stock + reserved_stock <= total_stock
+- reservable_stock + reserved_stock <= total_stock
+- total_stock >= reserved_stock
+- total_stock, reservable_stock, reserved_stock은 모두 0 이상
 ```
 
 MariaDB 버전에 따라 CHECK 제약 동작이 다를 수 있으므로, 백엔드에서도 반드시 검증하는 것을 권장한다.
@@ -217,6 +220,8 @@ CREATE TABLE reservations (
   status ENUM('PENDING', 'APPROVED', 'CANCELED', 'PICKED_UP') NOT NULL DEFAULT 'PENDING',
   visit_time DATETIME NULL,
   request_note VARCHAR(255),
+  canceled_at DATETIME NULL,
+  picked_up_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(user_id),
@@ -258,13 +263,49 @@ FOR UPDATE;
 UPDATE inventories
 SET reservable_stock = reservable_stock - ?,
     reserved_stock = reserved_stock + ?
-WHERE inventory_id = ?;
+WHERE inventory_id = ?
+  AND reservable_stock >= ?;
+
+-- affectedRows가 1인지 확인, 0이면 ROLLBACK
 
 INSERT INTO reservations (user_id, inventory_id, quantity, status, visit_time, request_note)
 VALUES (?, ?, ?, 'PENDING', ?, ?);
 
 COMMIT;
 ```
+
+예약 생성, 예약 취소, 판매자 상태 변경, 오프라인 판매 반영은 모두 트랜잭션으로 처리한다. 중간에 오류가 발생하면 반드시 `ROLLBACK`하여 재고와 예약 데이터가 일부만 반영되지 않도록 한다.
+
+### 7.1 reservation_status_logs
+
+예약 상태 변경 이력은 회복과 감사 추적을 위해 별도 테이블에 저장한다.
+
+```sql
+CREATE TABLE reservation_status_logs (
+  log_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  reservation_id BIGINT NOT NULL,
+  previous_status ENUM('PENDING', 'APPROVED', 'CANCELED', 'PICKED_UP') NULL,
+  new_status ENUM('PENDING', 'APPROVED', 'CANCELED', 'PICKED_UP') NOT NULL,
+  changed_by_user_id BIGINT NULL,
+  changed_by_role ENUM('CONSUMER', 'SELLER', 'ADMIN', 'SYSTEM') NOT NULL,
+  reason VARCHAR(255),
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (reservation_id) REFERENCES reservations(reservation_id),
+  FOREIGN KEY (changed_by_user_id) REFERENCES users(user_id),
+  INDEX idx_reservation_status_logs_reservation (reservation_id, created_at)
+);
+```
+
+상태 전이 규칙:
+
+```text
+PENDING -> APPROVED
+PENDING -> CANCELED
+APPROVED -> PICKED_UP
+APPROVED -> CANCELED
+```
+
+`CANCELED`, `PICKED_UP`은 최종 상태로 보고 되돌리지 않는다. 실수 복구가 필요하면 상태를 직접 되돌리기보다 관리자 승인 아래 새 보정 기록을 남기는 방식을 권장한다.
 
 ## 8. 키워드 및 검색 로그 설계
 
@@ -287,9 +328,10 @@ CREATE TABLE keyword_aliases (
   alias_id BIGINT PRIMARY KEY AUTO_INCREMENT,
   keyword_id BIGINT NOT NULL,
   alias VARCHAR(100) NOT NULL,
+  alias_normalized VARCHAR(100) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (keyword_id) REFERENCES keywords(keyword_id),
-  UNIQUE KEY uq_keyword_aliases_alias (alias),
+  UNIQUE KEY uq_keyword_aliases_alias_normalized (alias_normalized),
   FULLTEXT KEY ft_keyword_aliases_alias (alias)
 );
 ```
@@ -300,6 +342,9 @@ CREATE TABLE search_logs (
   user_id BIGINT NULL,
   keyword_id BIGINT NULL,
   raw_query VARCHAR(255) NOT NULL,
+  location_query VARCHAR(100) NULL,
+  result_count INT NOT NULL DEFAULT 0,
+  mapping_status ENUM('MAPPED', 'UNMAPPED') NOT NULL DEFAULT 'UNMAPPED',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(user_id),
   FOREIGN KEY (keyword_id) REFERENCES keywords(keyword_id),
@@ -310,10 +355,40 @@ CREATE TABLE search_logs (
 ```sql
 CREATE TABLE unmapped_searches (
   unmapped_id BIGINT PRIMARY KEY AUTO_INCREMENT,
-  raw_query VARCHAR(255) NOT NULL UNIQUE,
+  raw_query VARCHAR(255) NOT NULL,
+  raw_query_normalized VARCHAR(255) NOT NULL,
   count INT NOT NULL DEFAULT 1,
+  status ENUM('PENDING', 'RESOLVED', 'HOLD', 'REJECTED') NOT NULL DEFAULT 'PENDING',
+  resolved_action VARCHAR(30) NULL,
+  resolved_keyword_id BIGINT NULL,
+  created_keyword_id BIGINT NULL,
+  resolution_note VARCHAR(255) NULL,
+  resolved_by BIGINT NULL,
+  resolved_at DATETIME NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_unmapped_searches_normalized (raw_query_normalized),
+  FOREIGN KEY (resolved_keyword_id) REFERENCES keywords(keyword_id),
+  FOREIGN KEY (created_keyword_id) REFERENCES keywords(keyword_id),
+  FOREIGN KEY (resolved_by) REFERENCES users(user_id)
+);
+```
+
+### 8.1 location_cache
+
+Kakao Local REST API 호출 결과는 캐시해서 검색 성능과 API 호출량을 관리한다.
+
+```sql
+CREATE TABLE location_cache (
+  location_cache_id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  query VARCHAR(100) NOT NULL,
+  query_normalized VARCHAR(100) NOT NULL,
+  latitude DECIMAL(10, 7) NOT NULL,
+  longitude DECIMAL(10, 7) NOT NULL,
+  source ENUM('KAKAO_LOCAL', 'MANUAL') NOT NULL DEFAULT 'KAKAO_LOCAL',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_location_cache_query_normalized (query_normalized)
 );
 ```
 
@@ -328,7 +403,38 @@ CREATE TABLE unmapped_searches (
 6. 기존 키워드 별칭으로 등록하거나 신규 키워드로 생성한다.
 ```
 
-## 9. 관리자 감사 로그 선택 사항
+## 9. 병행제어와 회복 설계
+
+예약과 재고는 여러 사용자가 동시에 접근할 수 있으므로 병행제어와 회복 정책을 명확히 둔다.
+
+병행제어 규칙:
+
+```text
+- 예약 생성, 예약 취소, 수령 완료, 오프라인 판매 반영은 inventory 행을 SELECT ... FOR UPDATE로 잠근다.
+- 예약 생성 시 조건부 UPDATE와 affectedRows 확인을 함께 사용한다.
+- 예약 상태 변경은 reservation 행을 SELECT ... FOR UPDATE로 잠근 뒤 상태 전이를 검증한다.
+- 판매자 재고 수정 시 total_stock >= reserved_stock, reservable_stock + reserved_stock <= total_stock을 검증한다.
+```
+
+회복 규칙:
+
+```text
+- 트랜잭션 중 하나라도 실패하면 ROLLBACK한다.
+- 재고 변경과 예약 생성/취소/상태 변경은 부분 반영되면 안 된다.
+- 상태 변경은 reservation_status_logs에 남겨 장애 후 추적과 복구 근거로 사용한다.
+- 미매핑 검색어 처리도 resolved_action, resolved_keyword_id, created_keyword_id 등을 남겨 처리 취소가 가능하게 한다.
+```
+
+오프라인 판매 반영 정책:
+
+```text
+오프라인 판매량은 reservable_stock에서 우선 차감한다.
+quantity <= reservable_stock일 때만 허용한다.
+total_stock과 reservable_stock을 동시에 감소시킨다.
+reserved_stock은 이미 예약된 재고이므로 오프라인 판매로 직접 차감하지 않는다.
+```
+
+## 10. 관리자 감사 로그 선택 사항
 
 시간이 남으면 관리자 처리 이력을 남기는 `audit_logs`를 추가할 수 있다.
 
@@ -355,7 +461,7 @@ UNMAPPED_SEARCH_RESOLVED
 PRODUCT_HIDDEN
 ```
 
-## 10. 프론트엔드와 맞출 API 목표
+## 11. 프론트엔드와 맞출 API 목표
 
 현재 프론트엔드는 mock 데이터를 사용하지만, 이후 아래 API와 연결될 예정이다.
 
@@ -379,6 +485,7 @@ PATCH /api/seller/stores/:storeId
 POST /api/seller/products
 GET /api/seller/stores/:storeId/products
 PATCH /api/seller/inventories/:inventoryId
+POST /api/seller/inventories/:inventoryId/offline-sales
 GET /api/seller/reservations
 PATCH /api/seller/reservations/:reservationId/status
 ```
@@ -397,9 +504,10 @@ POST /api/admin/keyword-aliases
 GET /api/admin/unmapped-searches
 PATCH /api/admin/unmapped-searches/:id/resolve
 GET /api/admin/search-logs
+GET /api/admin/search-summary
 ```
 
-## 11. seed.sql 작성 기준
+## 12. seed.sql 작성 기준
 
 현재 `database/seed.sql`은 일부러 비워둔 상태이다.
 
@@ -431,7 +539,7 @@ GET /api/admin/search-logs
 - stores와 products를 넣은 뒤 inventories를 넣는다.
 - inventories를 넣은 뒤 reservations를 넣는다.
 
-## 12. DB 담당자 작업 브랜치 추천
+## 13. DB 담당자 작업 브랜치 추천
 
 ```bash
 git checkout develop
@@ -447,7 +555,7 @@ feat: add database seed data
 feat: add inventory reservation constraints
 ```
 
-## 13. 제출 전 확인 사항
+## 14. 제출 전 확인 사항
 
 DB 변경사항을 push하기 전에 확인할 것:
 
@@ -459,6 +567,9 @@ products에 image_url 컬럼이 있는가?
 inventories가 store_id, product_id를 기준으로 유일한가?
 reservations가 inventory_id를 참조하는가?
 예약 시 재고 음수 방지 로직을 백엔드에서 구현할 수 있는가?
-keyword_aliases.alias가 중복되지 않는가?
-unmapped_searches.raw_query가 중복되지 않고 count 증가가 가능한가?
+예약 생성/취소/상태 변경이 트랜잭션으로 처리되는가?
+reservation_status_logs로 상태 변경 이력을 추적할 수 있는가?
+keyword_aliases.alias_normalized가 중복되지 않는가?
+unmapped_searches.raw_query_normalized가 중복되지 않고 count 증가가 가능한가?
+location_cache.query_normalized가 중복되지 않는가?
 ```

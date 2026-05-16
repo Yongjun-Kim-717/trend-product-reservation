@@ -2,7 +2,7 @@
 
 Base URL: `http://localhost:4000/api`
 
-최종 수정일: 2026-05-16
+최종 수정일: 2026-05-17
 
 ## 1. 공통 규칙
 
@@ -105,6 +105,24 @@ Query Parameters:
 
 ```text
 query: 사용자 검색어
+lat: 사용자 현재 위치 위도, 선택값
+lng: 사용자 현재 위치 경도, 선택값
+```
+
+위치 기준 결정 우선순위:
+
+```text
+1. query 안에서 추출한 위치어: 예) 부평역, 성수역
+2. lat/lng 파라미터: 브라우저 Geolocation 또는 사용자가 설정한 기본 위치
+3. 서비스 기본 위치: 개발 초기 fallback 좌표
+```
+
+위치어가 포함되지 않은 검색어 예시:
+
+```text
+버터떡
+두쫀쿠
+약과쿠키
 ```
 
 Response:
@@ -151,8 +169,11 @@ Response:
 
 ```text
 - Kakao Local REST API 결과는 location_cache에 저장한다.
-- keyword_aliases.alias_normalized에 인덱스를 둔다.
+- location_cache.query_normalized에는 UNIQUE 인덱스를 둔다.
+- keyword_aliases.alias_normalized에는 UNIQUE 또는 INDEX를 둔다.
+- unmapped_searches.raw_query_normalized에는 UNIQUE 인덱스를 둔다.
 - 위치 기반 매장 검색은 stores(latitude, longitude) 인덱스를 활용한다.
+- 검색어 매핑은 LIKE '%검색어%' 방식보다 정규화된 alias exact match를 우선한다.
 - 검색 로그 저장은 초기에는 동기 INSERT로 처리해도 된다.
 ```
 
@@ -291,12 +312,35 @@ Success:
 예약 처리 규칙:
 
 ```text
-1. inventories 행을 SELECT ... FOR UPDATE로 잠근다.
-2. reservable_stock >= quantity인지 확인한다.
-3. reservable_stock을 quantity만큼 감소시킨다.
-4. reserved_stock을 quantity만큼 증가시킨다.
-5. reservations 행을 PENDING 상태로 생성한다.
-6. 트랜잭션을 커밋한다.
+1. START TRANSACTION을 시작한다.
+2. inventories 행을 SELECT ... FOR UPDATE로 잠근다.
+3. reservable_stock >= quantity인지 1차 확인한다.
+4. 조건부 UPDATE로 reservable_stock 감소와 reserved_stock 증가를 동시에 처리한다.
+5. UPDATE affectedRows가 1인지 확인한다. 0이면 재고 부족으로 판단한다.
+6. reservations 행을 PENDING 상태로 생성한다.
+7. reservation_status_logs에 최초 상태 로그를 기록한다.
+8. 모든 작업이 성공하면 COMMIT한다.
+9. 중간에 하나라도 실패하면 ROLLBACK한다.
+```
+
+조건부 재고 차감 SQL 예시:
+
+```sql
+UPDATE inventories
+SET reservable_stock = reservable_stock - ?,
+    reserved_stock = reserved_stock + ?
+WHERE inventory_id = ?
+  AND reservable_stock >= ?;
+```
+
+회복 및 중복 요청 처리:
+
+```text
+- 예약 생성 중 DB 오류, 서버 오류, 검증 실패가 발생하면 반드시 ROLLBACK한다.
+- 재고만 감소하고 예약이 생성되지 않는 부분 반영 상태가 발생하면 안 된다.
+- 동일 사용자가 같은 inventory_id, visit_time, quantity로 짧은 시간 안에 반복 요청한 경우 중복 예약 가능성을 검증한다.
+- 초기 구현에서는 user_id + inventory_id + visit_time + status(PENDING/APPROVED) 기준으로 중복 예약을 막는다.
+- 최종 구조에서는 Idempotency-Key 헤더를 받아 같은 요청의 중복 처리를 더 안전하게 막을 수 있다.
 ```
 
 재고 부족 시:
@@ -316,12 +360,32 @@ Success:
 
 소비자가 예약을 취소한다.
 
+취소 가능 상태:
+
+```text
+PENDING
+APPROVED
+```
+
+취소 불가 상태:
+
+```text
+CANCELED
+PICKED_UP
+```
+
 취소 시 재고 처리:
 
 ```text
-reserved_stock 감소
-reservable_stock 증가
-reservation.status = CANCELED
+1. START TRANSACTION을 시작한다.
+2. reservations 행을 SELECT ... FOR UPDATE로 잠근다.
+3. 예약 상태가 취소 가능한 상태인지 확인한다.
+4. 연결된 inventories 행을 SELECT ... FOR UPDATE로 잠근다.
+5. reserved_stock을 quantity만큼 감소시킨다.
+6. reservable_stock을 quantity만큼 증가시킨다.
+7. reservation.status = CANCELED로 변경한다.
+8. reservation_status_logs에 상태 변경 이력을 남긴다.
+9. 성공 시 COMMIT, 실패 시 ROLLBACK한다.
 ```
 
 ## 7. Seller API
@@ -388,7 +452,40 @@ Request:
 검증 규칙:
 
 ```text
-reservable_stock + reserved_stock <= total_stock
+- reservable_stock + reserved_stock <= total_stock
+- total_stock >= reserved_stock
+- reserved_stock은 판매자가 직접 수정할 수 없다. 예약/취소/수령 완료 처리로만 변경된다.
+- 판매자는 본인이 소유한 매장의 inventory만 수정할 수 있다.
+```
+
+### POST /seller/inventories/:inventoryId/offline-sales
+
+판매자가 오프라인 판매량을 반영한다.
+
+Request:
+
+```json
+{
+  "quantity": 3
+}
+```
+
+처리 규칙:
+
+```text
+1. 판매자가 해당 inventory의 매장 소유자인지 확인한다.
+2. START TRANSACTION을 시작한다.
+3. inventories 행을 SELECT ... FOR UPDATE로 잠근다.
+4. quantity <= reservable_stock인지 확인한다.
+5. total_stock과 reservable_stock을 quantity만큼 함께 감소시킨다.
+6. 성공 시 COMMIT, 실패 시 ROLLBACK한다.
+```
+
+정책:
+
+```text
+오프라인 판매는 온라인 예약 가능 재고에서 우선 차감한다.
+이미 예약된 reserved_stock은 오프라인 판매로 차감할 수 없다.
 ```
 
 ### GET /seller/reservations
@@ -416,7 +513,51 @@ APPROVED -> PICKED_UP
 APPROVED -> CANCELED
 ```
 
-## 8. Admin API
+상태 변경 규칙:
+
+```text
+- 판매자는 본인 매장의 예약만 변경할 수 있다.
+- 현재 상태를 조회한 뒤 허용된 상태 전이인지 검증한다.
+- CANCELED, PICKED_UP 상태는 최종 상태로 보고 되돌리지 않는다.
+- CANCELED 처리 시 예약 취소와 동일하게 재고를 복구한다.
+- PICKED_UP 처리 시 reserved_stock을 quantity만큼 감소시킨다.
+- 모든 상태 변경은 reservation_status_logs에 기록한다.
+```
+
+
+## 8. Upload API
+
+### POST /uploads/product-image
+
+판매자가 상품 대표 이미지를 업로드한다.
+
+Request:
+
+```text
+multipart/form-data
+file: 이미지 파일
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "image_url": "/uploads/products/abc.jpg"
+  },
+  "message": "이미지가 업로드되었습니다."
+}
+```
+
+검증 규칙:
+
+```text
+- jpg, jpeg, png, webp만 허용한다.
+- 파일 크기는 초기 구현 기준 5MB 이하로 제한한다.
+- DB에는 파일 바이너리가 아니라 image_url만 저장한다.
+```
+
+## 9. Admin API
 
 ### GET /admin/users
 
@@ -536,6 +677,17 @@ Request:
 }
 ```
 
+처리 취소를 지원하기 위한 기록 항목:
+
+```text
+- resolved_action
+- resolved_keyword_id
+- created_keyword_id
+- resolution_note
+- resolved_by
+- resolved_at
+```
+
 ### GET /admin/search-logs
 
 검색 로그를 조회한다.
@@ -559,7 +711,77 @@ Response:
 }
 ```
 
-## 9. 백엔드 구현 우선순위
+### GET /admin/search-summary
+
+관리자 대시보드용 검색 요약 통계를 조회한다.
+
+Response:
+
+```json
+{
+  "data": {
+    "total_search_count": 320,
+    "mapped_search_count": 280,
+    "unmapped_search_count": 40,
+    "top_keywords": [
+      {
+        "keyword_id": 1,
+        "keyword_name": "버터떡",
+        "search_count": 92
+      }
+    ]
+  }
+}
+```
+
+## 10. 인증과 권한 정책
+
+초기 개발에서는 로그인 기능이 완성되기 전이므로 요청 body 또는 query의 `user_id`를 임시로 사용할 수 있다. 단, API 명세와 코드 구조는 최종적으로 JWT 기반 인증으로 전환하기 쉽게 작성한다.
+
+역할별 접근 규칙:
+
+```text
+- /seller/*: SELLER만 접근 가능
+- /admin/*: ADMIN만 접근 가능
+- 소비자 예약 API: CONSUMER 또는 본인 사용자만 접근 가능
+- 판매자 API는 본인 소유 매장/재고/예약만 수정 가능
+```
+
+## 11. 병행제어와 회복 정책
+
+데이터 정합성이 중요한 작업은 반드시 트랜잭션으로 처리한다.
+
+트랜잭션 필수 API:
+
+```text
+- POST /reservations
+- PATCH /reservations/:reservationId/cancel
+- PATCH /seller/reservations/:reservationId/status
+- PATCH /seller/inventories/:inventoryId
+- POST /seller/inventories/:inventoryId/offline-sales
+- PATCH /admin/unmapped-searches/:id/resolve
+```
+
+병행제어 정책:
+
+```text
+- 예약 생성/취소/수령 완료/오프라인 판매는 inventory 행을 SELECT ... FOR UPDATE로 잠근다.
+- 재고 차감은 조건부 UPDATE와 affectedRows 확인을 함께 사용한다.
+- 같은 재고에 동시에 여러 예약 요청이 들어와도 reservable_stock이 음수가 되면 안 된다.
+- 예약 상태 변경은 reservation 행을 잠근 뒤 현재 상태 기준으로 검증한다.
+```
+
+회복 정책:
+
+```text
+- 트랜잭션 중 하나의 작업이라도 실패하면 ROLLBACK한다.
+- 재고 변경과 예약 생성/상태 변경은 부분적으로만 반영되면 안 된다.
+- 서버가 응답 전 실패하더라도 DB에는 COMMIT된 데이터만 남아야 한다.
+- 상태 변경 이력은 reservation_status_logs에 남겨 장애 후 추적과 수동 복구 근거로 사용한다.
+- 관리자 미매핑 처리도 처리 이력을 남겨 실수 발생 시 UNDO할 수 있게 한다.
+```
+
+## 12. 백엔드 구현 우선순위
 
 현재 프론트와 연결하기 위한 추천 구현 순서:
 
@@ -567,13 +789,17 @@ Response:
 1. DB 연결 설정 확인
 2. GET /health
 3. GET /products/trending
-4. GET /search?query=...
-5. POST /reservations 트랜잭션 처리
-6. GET /seller/stores/:storeId/products
-7. PATCH /seller/inventories/:inventoryId
-8. GET /seller/reservations
-9. PATCH /seller/reservations/:reservationId/status
-10. GET /admin/unmapped-searches
-11. PATCH /admin/unmapped-searches/:id/resolve
-12. GET /admin/search-logs
+4. GET /search?query=...&lat=...&lng=...
+5. POST /reservations 트랜잭션 및 조건부 재고 차감
+6. PATCH /reservations/:reservationId/cancel 트랜잭션 및 재고 복구
+7. POST /uploads/product-image
+8. GET /seller/stores/:storeId/products
+9. PATCH /seller/inventories/:inventoryId
+10. POST /seller/inventories/:inventoryId/offline-sales
+11. GET /seller/reservations
+12. PATCH /seller/reservations/:reservationId/status
+13. GET /admin/unmapped-searches
+14. PATCH /admin/unmapped-searches/:id/resolve
+15. GET /admin/search-logs
+16. GET /admin/search-summary
 ```
