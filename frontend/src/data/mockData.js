@@ -74,8 +74,9 @@ export const sellerProducts = [
 ];
 
 export const sellerReservations = [
-  { id: 101, product: "버터떡", customer: "민지", quantity: 2, status: "승인 대기", visitTime: "오늘 16:30" },
-  { id: 102, product: "두쫀쿠", customer: "준호", quantity: 1, status: "수령 대기", visitTime: "오늘 18:00" },
+  { id: 101, product: "버터떡", customer: "민지", quantity: 2, status: "PENDING", visitTime: "오늘 16:30" },
+  { id: 102, product: "두쫀쿠", customer: "준호", quantity: 1, status: "APPROVED", visitTime: "오늘 18:00" },
+  { id: 103, product: "약과쿠키", customer: "서연", quantity: 3, status: "PICKED_UP", visitTime: "오늘 14:20" },
 ];
 
 export const adminRows = [
