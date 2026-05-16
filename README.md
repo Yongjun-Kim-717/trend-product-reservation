@@ -37,10 +37,29 @@ docs/       요구사항, API 명세, ERD, Git 작업 규칙
 
 ## Local Setup
 
+처음 한 번 루트 폴더에서 의존성을 설치합니다.
+
 ```bash
-npm install
-npm run dev:backend
-npm run dev:frontend
+npm.cmd install
+```
+
+루트 폴더에서 실행하는 경우:
+
+```bash
+npm.cmd run dev:backend
+npm.cmd run dev:frontend
+```
+
+`frontend` 폴더 안에서 프론트만 실행하는 경우:
+
+```bash
+npm.cmd run dev
+```
+
+또는 같은 의미로 아래 명령도 사용할 수 있습니다.
+
+```bash
+npm.cmd run dev:frontend
 ```
 
 MariaDB는 로컬 설치 또는 `docker-compose.yml`을 이용해 실행할 수 있습니다.
@@ -49,4 +68,4 @@ MariaDB는 로컬 설치 또는 `docker-compose.yml`을 이용해 실행할 수 
 docker compose up -d
 ```
 
-환경 변수는 `.env.example`을 복사해 각자 `.env`로 작성합니다.
+환경 변수는 `.env.example`을 복사해 각자 `.env`로 작성합니다. 카카오맵 설정은 `docs/kakao-map-setup.md`를 참고합니다.
