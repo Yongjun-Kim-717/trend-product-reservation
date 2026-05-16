@@ -2,7 +2,7 @@
 import { MapPin } from "lucide-react";
 import { loadKakaoMapSdk } from "../utils/kakaoMap.js";
 
-function FallbackMap({ stores, selectedStoreId, onSelectStore }) {
+function FallbackMap({ stores, selectedStoreId, onSelectStore, errorMessage }) {
   return (
     <section className="map-area fallback-map" aria-label="지도 영역">
       <div className="map-grid" />
@@ -17,7 +17,10 @@ function FallbackMap({ stores, selectedStoreId, onSelectStore }) {
           <MapPin size={18} />
         </button>
       ))}
-      <div className="map-notice">Kakao JavaScript 키를 설정하면 실제 지도가 표시됩니다.</div>
+      <div className="map-notice">
+        <strong>카카오맵 연결 대기</strong>
+        <span>{errorMessage || "Kakao JavaScript 키를 설정하면 실제 지도가 표시됩니다."}</span>
+      </div>
     </section>
   );
 }
@@ -26,7 +29,7 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
   const mapElement = useRef(null);
   const mapInstance = useRef(null);
   const markers = useRef([]);
-  const [isFallback, setIsFallback] = useState(false);
+  const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -53,7 +56,10 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
           return marker;
         });
       })
-      .catch(() => setIsFallback(true));
+      .catch((error) => {
+        console.error(error);
+        setErrorMessage(error.message);
+      });
 
     return () => {
       cancelled = true;
@@ -69,8 +75,8 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
     mapInstance.current.panTo(new window.kakao.maps.LatLng(selectedStore.latitude, selectedStore.longitude));
   }, [selectedStoreId, stores]);
 
-  if (isFallback) {
-    return <FallbackMap stores={stores} selectedStoreId={selectedStoreId} onSelectStore={onSelectStore} />;
+  if (errorMessage) {
+    return <FallbackMap stores={stores} selectedStoreId={selectedStoreId} onSelectStore={onSelectStore} errorMessage={errorMessage} />;
   }
 
   return <section ref={mapElement} className="map-area kakao-map" aria-label="카카오 지도" />;

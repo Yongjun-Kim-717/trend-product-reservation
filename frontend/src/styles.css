@@ -758,3 +758,23 @@ th {
     justify-content: space-between;
   }
 }
+
+.map-area.kakao-map {
+  width: 100%;
+  height: calc(100vh - 64px);
+  min-height: 560px;
+}
+
+.map-notice {
+  display: grid;
+  gap: 4px;
+}
+
+.map-notice strong {
+  color: #1f2933;
+}
+
+.map-notice span {
+  color: #52616f;
+  line-height: 1.45;
+}

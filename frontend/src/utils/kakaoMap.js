@@ -17,12 +17,19 @@ export function loadKakaoMapSdk() {
 
   kakaoMapLoader = new Promise((resolve, reject) => {
     const script = document.createElement("script");
-    script.src = `https://dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&autoload=false&libraries=services`;
+    script.src = `//dapi.kakao.com/v2/maps/sdk.js?appkey=${appKey}&autoload=false&libraries=services`;
     script.async = true;
-    script.onload = () => window.kakao.maps.load(() => resolve(window.kakao));
-    script.onerror = () => reject(new Error("Failed to load Kakao Map SDK."));
+    script.onload = () => {
+      if (!window.kakao?.maps) {
+        reject(new Error("Kakao Map SDK loaded, but window.kakao.maps is missing."));
+        return;
+      }
+      window.kakao.maps.load(() => resolve(window.kakao));
+    };
+    script.onerror = () => reject(new Error("Kakao Map SDK script request failed. Check Kakao Developers domain settings, key type, and network access."));
     document.head.appendChild(script);
   });
 
   return kakaoMapLoader;
 }
+
