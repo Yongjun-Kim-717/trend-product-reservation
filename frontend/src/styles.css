@@ -778,3 +778,91 @@ th {
   color: #52616f;
   line-height: 1.45;
 }
+
+.trend-chip.selected {
+  border-color: #278367;
+  background: #edf8f3;
+}
+
+.clear-filter-button,
+.result-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  border: 1px solid #cfd9d4;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #52616f;
+  padding: 0 10px;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.store-card {
+  position: relative;
+  border-width: 2px;
+}
+
+.store-card.selected::before {
+  content: "선택";
+  position: absolute;
+  right: 12px;
+  top: -10px;
+  border-radius: 999px;
+  background: #278367;
+  color: #ffffff;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.map-label {
+  display: grid;
+  gap: 2px;
+  min-width: 116px;
+  border: 1px solid #d4ded9;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #1f2933;
+  padding: 8px 10px;
+  text-align: left;
+  box-shadow: 0 10px 24px rgba(31, 41, 51, 0.18);
+}
+
+.map-label strong {
+  font-size: 13px;
+}
+
+.map-label span {
+  color: #5f6f7c;
+  font-size: 12px;
+}
+
+.map-label.selected {
+  border-color: #278367;
+  background: #effaf5;
+  box-shadow: 0 14px 32px rgba(39, 131, 103, 0.28);
+}
+
+.linked-popup {
+  width: 310px;
+  left: auto;
+  right: 24px;
+  top: 24px;
+}
+
+.popup-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.popup-title-row span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #206b55;
+  font-weight: 800;
+}

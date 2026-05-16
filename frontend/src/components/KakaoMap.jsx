@@ -8,7 +8,7 @@ function FallbackMap({ stores, selectedStoreId, onSelectStore, errorMessage }) {
       <div className="map-grid" />
       {stores.map((store, index) => (
         <button
-          className={`map-pin pin-${index + 1} ${selectedStoreId === store.id ? "selected" : ""}`}
+          className={`map-pin pin-${(index % 3) + 1} ${selectedStoreId === store.id ? "selected" : ""}`}
           key={store.id}
           onClick={() => onSelectStore(store.id)}
           type="button"
@@ -29,6 +29,7 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
   const mapElement = useRef(null);
   const mapInstance = useRef(null);
   const markers = useRef([]);
+  const overlays = useRef([]);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
@@ -45,16 +46,6 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
           center,
           level: 5,
         });
-
-        markers.current = stores.map((store) => {
-          const marker = new kakao.maps.Marker({
-            position: new kakao.maps.LatLng(store.latitude, store.longitude),
-            map: mapInstance.current,
-          });
-
-          kakao.maps.event.addListener(marker, "click", () => onSelectStore(store.id));
-          return marker;
-        });
       })
       .catch((error) => {
         console.error(error);
@@ -64,7 +55,60 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
     return () => {
       cancelled = true;
       markers.current.forEach((marker) => marker.setMap(null));
+      overlays.current.forEach((overlay) => overlay.setMap(null));
       markers.current = [];
+      overlays.current = [];
+      mapInstance.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mapInstance.current || !window.kakao?.maps) return;
+
+    const kakao = window.kakao;
+    markers.current.forEach((marker) => marker.setMap(null));
+    overlays.current.forEach((overlay) => overlay.setMap(null));
+    markers.current = [];
+    overlays.current = [];
+
+    const bounds = new kakao.maps.LatLngBounds();
+
+    stores.forEach((store) => {
+      const position = new kakao.maps.LatLng(store.latitude, store.longitude);
+      const marker = new kakao.maps.Marker({
+        position,
+        map: mapInstance.current,
+      });
+
+      const overlayElement = document.createElement("button");
+      overlayElement.type = "button";
+      overlayElement.className = `map-label ${selectedStoreId === store.id ? "selected" : ""}`;
+      overlayElement.innerHTML = `<strong>${store.name}</strong><span>${store.distance}</span>`;
+      overlayElement.addEventListener("click", () => onSelectStore(store.id));
+
+      const overlay = new kakao.maps.CustomOverlay({
+        position,
+        content: overlayElement,
+        yAnchor: 2.25,
+        zIndex: selectedStoreId === store.id ? 4 : 3,
+      });
+
+      kakao.maps.event.addListener(marker, "click", () => onSelectStore(store.id));
+      overlay.setMap(mapInstance.current);
+      markers.current.push(marker);
+      overlays.current.push(overlay);
+      bounds.extend(position);
+    });
+
+    if (stores.length > 1) {
+      mapInstance.current.setBounds(bounds);
+    }
+
+    return () => {
+      markers.current.forEach((marker) => marker.setMap(null));
+      overlays.current.forEach((overlay) => overlay.setMap(null));
+      markers.current = [];
+      overlays.current = [];
     };
   }, [stores, onSelectStore, selectedStoreId]);
 

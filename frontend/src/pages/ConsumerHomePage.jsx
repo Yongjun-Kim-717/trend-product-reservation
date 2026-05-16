@@ -1,6 +1,6 @@
-﻿import { useCallback, useMemo, useState } from "react";
+﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Search } from "lucide-react";
+import { LocateFixed, Search, X } from "lucide-react";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import KakaoMap from "../components/KakaoMap.jsx";
 import { nearbyStores, products } from "../data/mockData.js";
@@ -9,10 +9,18 @@ function ProductThumb({ name }) {
   return <div className="product-thumb" aria-hidden="true">{name.slice(0, 1)}</div>;
 }
 
+function getStoreMatch(store, selectedProductId) {
+  const inventory = selectedProductId
+    ? store.inventories.find((item) => item.productId === selectedProductId)
+    : store.inventories[0];
+  const product = products.find((item) => item.id === inventory?.productId);
+  return { inventory, product };
+}
+
 function ConsumerHomePage() {
   const [query, setQuery] = useState("");
+  const [selectedProductId, setSelectedProductId] = useState(null);
   const [selectedStoreId, setSelectedStoreId] = useState(nearbyStores[0].id);
-  const selectedStore = nearbyStores.find((store) => store.id === selectedStoreId) ?? nearbyStores[0];
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -20,17 +28,41 @@ function ConsumerHomePage() {
     return products.filter((product) => product.name.toLowerCase().includes(normalizedQuery));
   }, [query]);
 
-  const filteredStores = useMemo(() => {
-    const productIds = new Set(filteredProducts.map((product) => product.id));
-    return nearbyStores.filter((store) => store.inventories.some((inventory) => productIds.has(inventory.productId)));
-  }, [filteredProducts]);
+  const activeProductId = selectedProductId ?? filteredProducts[0]?.id ?? null;
+  const activeProduct = products.find((product) => product.id === activeProductId);
+
+  const matchedStores = useMemo(() => {
+    if (!activeProductId) return nearbyStores;
+    return nearbyStores
+      .map((store) => ({ ...store, match: getStoreMatch(store, activeProductId) }))
+      .filter((store) => store.match.inventory);
+  }, [activeProductId]);
+
+  const visibleStores = matchedStores.length ? matchedStores : nearbyStores.map((store) => ({ ...store, match: getStoreMatch(store, null) }));
+
+  useEffect(() => {
+    if (!visibleStores.some((store) => store.id === selectedStoreId)) {
+      setSelectedStoreId(visibleStores[0]?.id ?? nearbyStores[0].id);
+    }
+  }, [visibleStores, selectedStoreId]);
+
+  const selectedStore = visibleStores.find((store) => store.id === selectedStoreId) ?? visibleStores[0];
+  const selectedInventory = selectedStore?.match?.inventory ?? selectedStore?.inventories[0];
+  const selectedProduct = selectedStore?.match?.product ?? products.find((product) => product.id === selectedInventory?.productId);
 
   const handleSelectStore = useCallback((storeId) => {
     setSelectedStoreId(storeId);
   }, []);
 
-  const selectedInventory = selectedStore.inventories[0];
-  const selectedProduct = products.find((product) => product.id === selectedInventory.productId);
+  const handleSelectProduct = (product) => {
+    setSelectedProductId(product.id);
+    setQuery(product.name);
+  };
+
+  const clearProductFilter = () => {
+    setSelectedProductId(null);
+    setQuery("");
+  };
 
   return (
     <div className="page-shell">
@@ -41,17 +73,34 @@ function ConsumerHomePage() {
             상품 검색
             <div className="input-with-icon">
               <Search size={18} />
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="버터떡, 두쫀쿠 검색" />
+              <input
+                value={query}
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setSelectedProductId(null);
+                }}
+                placeholder="버터떡, 두쫀쿠 검색"
+              />
             </div>
           </label>
 
           <section>
             <div className="section-title-row">
               <h2>유행 상품</h2>
+              {activeProduct && (
+                <button className="clear-filter-button" onClick={clearProductFilter} type="button">
+                  <X size={14} /> 전체
+                </button>
+              )}
             </div>
             <div className="chip-list">
               {products.map((product) => (
-                <button className="trend-chip" key={product.id} onClick={() => setQuery(product.name)} type="button">
+                <button
+                  className={`trend-chip ${activeProductId === product.id ? "selected" : ""}`}
+                  key={product.id}
+                  onClick={() => handleSelectProduct(product)}
+                  type="button"
+                >
                   <span>{product.name}</span>
                   <em>{product.trendBadge}</em>
                 </button>
@@ -60,11 +109,14 @@ function ConsumerHomePage() {
           </section>
 
           <section>
-            <h2>내 주변 매장</h2>
+            <div className="section-title-row">
+              <h2>내 주변 매장</h2>
+              <span className="result-count">{visibleStores.length}곳</span>
+            </div>
             <div className="store-list">
-              {filteredStores.map((store) => {
-                const inventory = store.inventories[0];
-                const product = products.find((item) => item.id === inventory.productId);
+              {visibleStores.map((store) => {
+                const inventory = store.match.inventory;
+                const product = store.match.product;
                 return (
                   <button
                     className={`store-card ${selectedStoreId === store.id ? "selected" : ""}`}
@@ -77,7 +129,7 @@ function ConsumerHomePage() {
                       <strong>{store.name}</strong>
                       <span>{store.distance} · {product?.name}</span>
                     </div>
-                    <span className="stock-pill">예약 가능 {inventory.reservableStock}</span>
+                    <span className="stock-pill">예약 가능 {inventory?.reservableStock ?? 0}</span>
                   </button>
                 );
               })}
@@ -86,14 +138,20 @@ function ConsumerHomePage() {
         </aside>
 
         <div className="map-stage">
-          <KakaoMap stores={filteredStores.length ? filteredStores : nearbyStores} selectedStoreId={selectedStoreId} onSelectStore={handleSelectStore} />
-          <article className="map-store-popup">
-            <strong>{selectedStore.name}</strong>
-            <span>{selectedStore.distance} · {selectedProduct?.name} 예약 가능 {selectedInventory.reservableStock}개</span>
-            <Link className="primary-button small" to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct?.id ?? 1}`}>
-              상세 보기
-            </Link>
-          </article>
+          <KakaoMap stores={visibleStores} selectedStoreId={selectedStoreId} onSelectStore={handleSelectStore} />
+          {selectedStore && selectedInventory && selectedProduct && (
+            <article className="map-store-popup linked-popup">
+              <div className="popup-title-row">
+                <strong>{selectedStore.name}</strong>
+                <span><LocateFixed size={14} /> {selectedStore.distance}</span>
+              </div>
+              <span>{selectedProduct.name} · 예약 가능 {selectedInventory.reservableStock}개</span>
+              <span>{selectedStore.address}</span>
+              <Link className="primary-button small" to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct.id}`}>
+                이 매장에서 예약하기
+              </Link>
+            </article>
+          )}
         </div>
       </main>
     </div>
