@@ -1083,3 +1083,39 @@ input:disabled {
     justify-content: flex-start;
   }
 }
+
+.product-form-heading {
+  align-items: flex-end;
+}
+
+.stock-rule-box {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid #dce4e0;
+  border-radius: 8px;
+  background: #f8faf9;
+}
+
+.stock-rule-box strong {
+  color: #1f2933;
+}
+
+.stock-rule-box span {
+  color: #5f6f7c;
+  line-height: 1.45;
+}
+
+.submit-summary-card {
+  display: grid;
+  gap: 14px;
+  border: 1px solid #cfe5dc;
+  border-radius: 10px;
+  background: #ffffff;
+  padding: 20px;
+}
+
+.submit-summary-card .info-list dd {
+  text-align: right;
+  word-break: break-all;
+}
