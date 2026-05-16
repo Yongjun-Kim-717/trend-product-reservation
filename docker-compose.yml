@@ -1,0 +1,16 @@
+﻿services:
+  mariadb:
+    image: mariadb:11
+    container_name: trend-product-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: root_password
+      MARIADB_DATABASE: trend_product_db
+      MARIADB_USER: trend_user
+      MARIADB_PASSWORD: trend_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./mariadb-data:/var/lib/mysql
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
