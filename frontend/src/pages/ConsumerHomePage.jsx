@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { LocateFixed, Search, X } from "lucide-react";
+import { LocateFixed, Navigation, Search, X } from "lucide-react";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import KakaoMap from "../components/KakaoMap.jsx";
 import { nearbyStores, products } from "../data/mockData.js";
@@ -17,10 +17,30 @@ function getStoreMatch(store, selectedProductId) {
   return { inventory, product };
 }
 
+function calculateDistanceKm(from, to) {
+  if (!from) return null;
+  const earthRadiusKm = 6371;
+  const latDistance = ((to.latitude - from.latitude) * Math.PI) / 180;
+  const lngDistance = ((to.longitude - from.longitude) * Math.PI) / 180;
+  const fromLat = (from.latitude * Math.PI) / 180;
+  const toLat = (to.latitude * Math.PI) / 180;
+  const a = Math.sin(latDistance / 2) ** 2 + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(lngDistance / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatDistance(distanceKm, fallbackDistance) {
+  if (distanceKm === null) return fallbackDistance;
+  if (distanceKm < 1) return `${Math.round(distanceKm * 1000)}m`;
+  return `${distanceKm.toFixed(1)}km`;
+}
+
 function ConsumerHomePage() {
   const [query, setQuery] = useState("");
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [selectedStoreId, setSelectedStoreId] = useState(nearbyStores[0].id);
+  const [userLocation, setUserLocation] = useState(null);
+  const [isLocating, setIsLocating] = useState(false);
+  const [locationMessage, setLocationMessage] = useState("내 위치를 설정하면 주변 매장이 거리순으로 정렬됩니다.");
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -32,13 +52,28 @@ function ConsumerHomePage() {
   const activeProduct = products.find((product) => product.id === activeProductId);
 
   const matchedStores = useMemo(() => {
-    if (!activeProductId) return nearbyStores;
-    return nearbyStores
-      .map((store) => ({ ...store, match: getStoreMatch(store, activeProductId) }))
-      .filter((store) => store.match.inventory);
-  }, [activeProductId]);
+    const baseStores = activeProductId
+      ? nearbyStores
+        .map((store) => ({ ...store, match: getStoreMatch(store, activeProductId) }))
+        .filter((store) => store.match.inventory)
+      : nearbyStores.map((store) => ({ ...store, match: getStoreMatch(store, null) }));
 
-  const visibleStores = matchedStores.length ? matchedStores : nearbyStores.map((store) => ({ ...store, match: getStoreMatch(store, null) }));
+    return baseStores
+      .map((store) => {
+        const distanceKm = calculateDistanceKm(userLocation, store);
+        return {
+          ...store,
+          distanceKm,
+          displayDistance: formatDistance(distanceKm, store.distance),
+        };
+      })
+      .sort((a, b) => {
+        if (a.distanceKm === null || b.distanceKm === null) return 0;
+        return a.distanceKm - b.distanceKm;
+      });
+  }, [activeProductId, userLocation]);
+
+  const visibleStores = matchedStores.length ? matchedStores : nearbyStores.map((store) => ({ ...store, match: getStoreMatch(store, null), distanceKm: null, displayDistance: store.distance }));
 
   useEffect(() => {
     if (!visibleStores.some((store) => store.id === selectedStoreId)) {
@@ -64,9 +99,35 @@ function ConsumerHomePage() {
     setQuery("");
   };
 
+  const requestCurrentLocation = () => {
+    if (!navigator.geolocation) {
+      setLocationMessage("이 브라우저에서는 위치 정보를 사용할 수 없습니다.");
+      return;
+    }
+
+    setIsLocating(true);
+    setLocationMessage("브라우저 위치 권한을 확인하고 있습니다.");
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        const nextLocation = {
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+        };
+        setUserLocation(nextLocation);
+        setIsLocating(false);
+        setLocationMessage("현재 위치 기준으로 주변 매장을 거리순 정렬했습니다.");
+      },
+      () => {
+        setIsLocating(false);
+        setLocationMessage("위치 권한을 허용하면 현재 위치 기준 주변 매장을 확인할 수 있습니다.");
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+    );
+  };
+
   return (
     <div className="page-shell">
-      <ConsumerHeader />
+      <ConsumerHeader onRequestLocation={requestCurrentLocation} isLocating={isLocating} />
       <main className="consumer-layout">
         <aside className="consumer-panel">
           <label className="search-box">
@@ -83,6 +144,11 @@ function ConsumerHomePage() {
               />
             </div>
           </label>
+
+          <div className="location-feedback">
+            <Navigation size={16} />
+            <span>{locationMessage}</span>
+          </div>
 
           <section>
             <div className="section-title-row">
@@ -127,7 +193,7 @@ function ConsumerHomePage() {
                     <ProductThumb name={product?.name ?? "상"} />
                     <div>
                       <strong>{store.name}</strong>
-                      <span>{store.distance} · {product?.name}</span>
+                      <span>{store.displayDistance} · {product?.name}</span>
                     </div>
                     <span className="stock-pill">예약 가능 {inventory?.reservableStock ?? 0}</span>
                   </button>
@@ -138,13 +204,13 @@ function ConsumerHomePage() {
         </aside>
 
         <div className="map-stage">
-          <KakaoMap stores={visibleStores} selectedStoreId={selectedStoreId} onSelectStore={handleSelectStore} />
+          <KakaoMap stores={visibleStores} selectedStoreId={selectedStoreId} onSelectStore={handleSelectStore} userLocation={userLocation} />
           {selectedStore && selectedInventory && selectedProduct && (
             <div className="map-overlay-layer">
               <article className="selected-store-panel">
                 <div className="popup-title-row">
                   <strong>{selectedStore.name}</strong>
-                  <span><LocateFixed size={14} /> {selectedStore.distance}</span>
+                  <span><LocateFixed size={14} /> {selectedStore.displayDistance}</span>
                 </div>
                 <div className="selected-store-product">
                   <ProductThumb name={selectedProduct.name} />

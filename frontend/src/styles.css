@@ -1246,3 +1246,50 @@ input:disabled {
     min-width: 100%;
   }
 }
+
+.location-feedback {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #dce4e0;
+  border-radius: 8px;
+  background: #f4fbf8;
+  color: #2f5f50;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.location-feedback svg {
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.kakao-user-location-marker {
+  min-width: 64px;
+  border: 2px solid #ffffff;
+  border-radius: 999px;
+  background: #2857a3;
+  color: #ffffff;
+  padding: 6px 10px;
+  box-shadow: 0 12px 28px rgba(40, 87, 163, 0.28);
+  font-size: 12px;
+  font-weight: 900;
+  text-align: center;
+}
+
+.user-location-pin {
+  position: absolute;
+  left: 52%;
+  top: 54%;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 3px solid #ffffff;
+  border-radius: 999px;
+  background: #2857a3;
+  color: #ffffff;
+  box-shadow: 0 12px 28px rgba(40, 87, 163, 0.28);
+  z-index: 2;
+}

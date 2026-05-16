@@ -1,11 +1,16 @@
 ﻿import { useEffect, useRef, useState } from "react";
-import { MapPin } from "lucide-react";
+import { MapPin, Navigation } from "lucide-react";
 import { loadKakaoMapSdk } from "../utils/kakaoMap.js";
 
-function FallbackMap({ stores, selectedStoreId, onSelectStore, errorMessage }) {
+function FallbackMap({ stores, selectedStoreId, onSelectStore, userLocation, errorMessage }) {
   return (
     <section className="map-area fallback-map" aria-label="지도 영역">
       <div className="map-grid" />
+      {userLocation && (
+        <div className="user-location-pin fallback-user-pin" aria-label="내 위치">
+          <Navigation size={16} />
+        </div>
+      )}
       {stores.map((store, index) => (
         <button
           className={`map-pin pin-${(index % 3) + 1} ${selectedStoreId === store.id ? "selected" : ""}`}
@@ -25,11 +30,12 @@ function FallbackMap({ stores, selectedStoreId, onSelectStore, errorMessage }) {
   );
 }
 
-function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
+function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation }) {
   const mapElement = useRef(null);
   const mapInstance = useRef(null);
   const markers = useRef([]);
   const overlays = useRef([]);
+  const userMarker = useRef(null);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
@@ -40,7 +46,9 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
         if (cancelled || !mapElement.current || stores.length === 0) return;
 
         const centerStore = stores.find((store) => store.id === selectedStoreId) ?? stores[0];
-        const center = new kakao.maps.LatLng(centerStore.latitude, centerStore.longitude);
+        const center = userLocation
+          ? new kakao.maps.LatLng(userLocation.latitude, userLocation.longitude)
+          : new kakao.maps.LatLng(centerStore.latitude, centerStore.longitude);
 
         mapInstance.current = new kakao.maps.Map(mapElement.current, {
           center,
@@ -56,8 +64,10 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
       cancelled = true;
       markers.current.forEach((marker) => marker.setMap(null));
       overlays.current.forEach((overlay) => overlay.setMap(null));
+      userMarker.current?.setMap(null);
       markers.current = [];
       overlays.current = [];
+      userMarker.current = null;
       mapInstance.current = null;
     };
   }, []);
@@ -68,10 +78,28 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
     const kakao = window.kakao;
     markers.current.forEach((marker) => marker.setMap(null));
     overlays.current.forEach((overlay) => overlay.setMap(null));
+    userMarker.current?.setMap(null);
     markers.current = [];
     overlays.current = [];
+    userMarker.current = null;
 
     const bounds = new kakao.maps.LatLngBounds();
+
+    if (userLocation) {
+      const userPosition = new kakao.maps.LatLng(userLocation.latitude, userLocation.longitude);
+      const markerElement = document.createElement("div");
+      markerElement.className = "kakao-user-location-marker";
+      markerElement.innerHTML = "내 위치";
+
+      userMarker.current = new kakao.maps.CustomOverlay({
+        position: userPosition,
+        content: markerElement,
+        yAnchor: 0.5,
+        zIndex: 6,
+      });
+      userMarker.current.setMap(mapInstance.current);
+      bounds.extend(userPosition);
+    }
 
     stores.forEach((store) => {
       const position = new kakao.maps.LatLng(store.latitude, store.longitude);
@@ -100,17 +128,19 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
       bounds.extend(position);
     });
 
-    if (stores.length > 1) {
+    if (stores.length > 1 || userLocation) {
       mapInstance.current.setBounds(bounds);
     }
 
     return () => {
       markers.current.forEach((marker) => marker.setMap(null));
       overlays.current.forEach((overlay) => overlay.setMap(null));
+      userMarker.current?.setMap(null);
       markers.current = [];
       overlays.current = [];
+      userMarker.current = null;
     };
-  }, [stores, onSelectStore, selectedStoreId]);
+  }, [stores, onSelectStore, selectedStoreId, userLocation]);
 
   useEffect(() => {
     if (!mapInstance.current || !window.kakao?.maps) return;
@@ -120,10 +150,11 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore }) {
   }, [selectedStoreId, stores]);
 
   if (errorMessage) {
-    return <FallbackMap stores={stores} selectedStoreId={selectedStoreId} onSelectStore={onSelectStore} errorMessage={errorMessage} />;
+    return <FallbackMap stores={stores} selectedStoreId={selectedStoreId} onSelectStore={onSelectStore} userLocation={userLocation} errorMessage={errorMessage} />;
   }
 
   return <section ref={mapElement} className="map-area kakao-map" aria-label="카카오 지도" />;
 }
 
 export default KakaoMap;
+

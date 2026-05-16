@@ -15,10 +15,12 @@ function AppHeader({ role, children }) {
   );
 }
 
-export function ConsumerHeader() {
+export function ConsumerHeader({ onRequestLocation, isLocating }) {
   return (
     <AppHeader role="소비자">
-      <button className="ghost-button">내 위치</button>
+      <button className="ghost-button" onClick={onRequestLocation} disabled={isLocating} type="button">
+        {isLocating ? "위치 확인 중" : "내 위치"}
+      </button>
       <NavLink className="text-link" to="/consumer/reservations/new">내 예약</NavLink>
     </AppHeader>
   );
