@@ -30,7 +30,7 @@ function FallbackMap({ stores, selectedStoreId, onSelectStore, userLocation, err
   );
 }
 
-function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation }) {
+function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation, focusTarget }) {
   const mapElement = useRef(null);
   const mapInstance = useRef(null);
   const markers = useRef([]);
@@ -144,10 +144,18 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation }) {
 
   useEffect(() => {
     if (!mapInstance.current || !window.kakao?.maps) return;
-    const selectedStore = stores.find((store) => store.id === selectedStoreId);
-    if (!selectedStore) return;
-    mapInstance.current.panTo(new window.kakao.maps.LatLng(selectedStore.latitude, selectedStore.longitude));
-  }, [selectedStoreId, stores]);
+    if (focusTarget?.type === "user" && userLocation) {
+      mapInstance.current.setLevel(5);
+      mapInstance.current.panTo(new window.kakao.maps.LatLng(userLocation.latitude, userLocation.longitude));
+      return;
+    }
+
+    if (focusTarget?.type === "store") {
+      const selectedStore = stores.find((store) => store.id === selectedStoreId);
+      if (!selectedStore) return;
+      mapInstance.current.panTo(new window.kakao.maps.LatLng(selectedStore.latitude, selectedStore.longitude));
+    }
+  }, [focusTarget, selectedStoreId, stores, userLocation]);
 
   if (errorMessage) {
     return <FallbackMap stores={stores} selectedStoreId={selectedStoreId} onSelectStore={onSelectStore} userLocation={userLocation} errorMessage={errorMessage} />;

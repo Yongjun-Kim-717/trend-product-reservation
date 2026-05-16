@@ -41,6 +41,7 @@ function ConsumerHomePage() {
   const [userLocation, setUserLocation] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
   const [locationMessage, setLocationMessage] = useState("내 위치를 설정하면 주변 매장이 거리순으로 정렬됩니다.");
+  const [mapFocusTarget, setMapFocusTarget] = useState({ type: "store", id: nearbyStores[0].id });
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -87,6 +88,7 @@ function ConsumerHomePage() {
 
   const handleSelectStore = useCallback((storeId) => {
     setSelectedStoreId(storeId);
+    setMapFocusTarget({ type: "store", id: storeId });
   }, []);
 
   const handleSelectProduct = (product) => {
@@ -115,7 +117,8 @@ function ConsumerHomePage() {
         };
         setUserLocation(nextLocation);
         setIsLocating(false);
-        setLocationMessage("현재 위치 기준으로 주변 매장을 거리순 정렬했습니다.");
+        setLocationMessage(`현재 위치 기준으로 주변 매장을 거리순 정렬했습니다. (${nextLocation.latitude.toFixed(4)}, ${nextLocation.longitude.toFixed(4)})`);
+        setMapFocusTarget({ type: "user", id: Date.now() });
       },
       () => {
         setIsLocating(false);
@@ -187,7 +190,7 @@ function ConsumerHomePage() {
                   <button
                     className={`store-card ${selectedStoreId === store.id ? "selected" : ""}`}
                     key={store.id}
-                    onClick={() => setSelectedStoreId(store.id)}
+                    onClick={() => handleSelectStore(store.id)}
                     type="button"
                   >
                     <ProductThumb name={product?.name ?? "상"} />
@@ -204,7 +207,7 @@ function ConsumerHomePage() {
         </aside>
 
         <div className="map-stage">
-          <KakaoMap stores={visibleStores} selectedStoreId={selectedStoreId} onSelectStore={handleSelectStore} userLocation={userLocation} />
+          <KakaoMap stores={visibleStores} selectedStoreId={selectedStoreId} onSelectStore={handleSelectStore} userLocation={userLocation} focusTarget={mapFocusTarget} />
           {selectedStore && selectedInventory && selectedProduct && (
             <div className="map-overlay-layer">
               <article className="selected-store-panel">
