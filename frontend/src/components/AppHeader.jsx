@@ -1,0 +1,45 @@
+﻿import { Link, NavLink } from "react-router-dom";
+
+function AppHeader({ role, children }) {
+  return (
+    <header className="app-header">
+      <Link className="brand" to="/login">
+        <span className="brand-mark">T</span>
+        <span>트렌드 상품 예약</span>
+      </Link>
+      <div className="header-actions">
+        {children}
+        {role && <span className="role-badge">{role}</span>}
+      </div>
+    </header>
+  );
+}
+
+export function ConsumerHeader() {
+  return (
+    <AppHeader role="소비자">
+      <button className="ghost-button">내 위치</button>
+      <NavLink className="text-link" to="/consumer/reservations/new">내 예약</NavLink>
+    </AppHeader>
+  );
+}
+
+export function SellerHeader() {
+  return (
+    <AppHeader role="판매자">
+      <select className="compact-select" defaultValue="성수 디저트랩">
+        <option>성수 디저트랩</option>
+      </select>
+    </AppHeader>
+  );
+}
+
+export function AdminHeader() {
+  return (
+    <AppHeader role="관리자">
+      <input className="header-search" placeholder="데이터 검색" />
+    </AppHeader>
+  );
+}
+
+export default AppHeader;
