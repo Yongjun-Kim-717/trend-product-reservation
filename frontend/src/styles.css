@@ -866,3 +866,72 @@ th {
   color: #206b55;
   font-weight: 800;
 }
+
+button:disabled,
+input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.quantity-input {
+  width: 68px;
+  height: 34px;
+  padding: 0 8px;
+  text-align: center;
+}
+
+.error-message,
+.warning-message,
+.success-message {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.error-message,
+.warning-message {
+  padding: 12px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+
+.error-message {
+  border: 1px solid #f1c6c6;
+  background: #fff7f7;
+  color: #b42318;
+}
+
+.warning-message {
+  border: 1px solid #f2d48b;
+  background: #fff9e7;
+  color: #8a5a00;
+}
+
+.reservation-result {
+  display: grid;
+  gap: 12px;
+  margin-top: 4px;
+  padding-top: 16px;
+  border-top: 1px solid #e5ebe8;
+}
+
+.info-list.compact {
+  gap: 0;
+  border: 1px solid #e5ebe8;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.info-list.compact div {
+  padding: 10px 12px;
+}
+
+.info-list.compact div:last-child {
+  border-bottom: 0;
+}
+
+.result-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
