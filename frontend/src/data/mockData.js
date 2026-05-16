@@ -67,6 +67,13 @@ export const nearbyStores = [
   },
 ];
 
+export const mockLocationQueries = {
+  부평역: { label: "부평역", latitude: 37.4895, longitude: 126.7247 },
+  성수역: { label: "성수역", latitude: 37.5446, longitude: 127.0557 },
+  홍대입구역: { label: "홍대입구역", latitude: 37.5572, longitude: 126.9245 },
+  강남역: { label: "강남역", latitude: 37.4979, longitude: 127.0276 },
+};
+
 export const sellerProducts = [
   { id: 1, name: "버터떡", category: "디저트", total: 40, reservable: 18, reserved: 6, imageUrl: "", status: "판매중" },
   { id: 2, name: "두쫀쿠", category: "쿠키", total: 24, reservable: 9, reserved: 4, imageUrl: "", status: "판매중" },

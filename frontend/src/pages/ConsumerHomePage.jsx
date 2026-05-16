@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { LocateFixed, Navigation, Search, X } from "lucide-react";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import KakaoMap from "../components/KakaoMap.jsx";
-import { nearbyStores, products } from "../data/mockData.js";
+import { mockLocationQueries, nearbyStores, products } from "../data/mockData.js";
 
 function ProductThumb({ name }) {
   return <div className="product-thumb" aria-hidden="true">{name.slice(0, 1)}</div>;
@@ -34,6 +34,16 @@ function formatDistance(distanceKm, fallbackDistance) {
   return `${distanceKm.toFixed(1)}km`;
 }
 
+function parseMockSearch(rawQuery) {
+  const locationEntry = Object.entries(mockLocationQueries).find(([locationName]) => rawQuery.includes(locationName));
+  const product = products.find((item) => rawQuery.includes(item.name));
+
+  return {
+    location: locationEntry ? locationEntry[1] : null,
+    product: product ?? null,
+  };
+}
+
 function ConsumerHomePage() {
   const [query, setQuery] = useState("");
   const [selectedProductId, setSelectedProductId] = useState(null);
@@ -42,6 +52,11 @@ function ConsumerHomePage() {
   const [isLocating, setIsLocating] = useState(false);
   const [locationMessage, setLocationMessage] = useState("내 위치를 설정하면 주변 매장이 거리순으로 정렬됩니다.");
   const [mapFocusTarget, setMapFocusTarget] = useState({ type: "store", id: nearbyStores[0].id });
+  const [searchContext, setSearchContext] = useState({
+    locationLabel: "기본 지도 위치",
+    productLabel: "전체 상품",
+    source: "기본",
+  });
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -99,6 +114,32 @@ function ConsumerHomePage() {
   const clearProductFilter = () => {
     setSelectedProductId(null);
     setQuery("");
+    setSearchContext({ locationLabel: userLocation ? "현재 위치" : "기본 지도 위치", productLabel: "전체 상품", source: userLocation ? "내 위치" : "기본" });
+  };
+
+  const submitSearch = (event) => {
+    event.preventDefault();
+    const parsed = parseMockSearch(query);
+
+    if (parsed.product) {
+      setSelectedProductId(parsed.product.id);
+    } else {
+      setSelectedProductId(null);
+    }
+
+    if (parsed.location) {
+      setUserLocation({ latitude: parsed.location.latitude, longitude: parsed.location.longitude });
+      setMapFocusTarget({ type: "user", id: `${parsed.location.label}-${Date.now()}` });
+    }
+
+    setSearchContext({
+      locationLabel: parsed.location?.label ?? (userLocation ? "현재 위치" : "기본 지도 위치"),
+      productLabel: parsed.product?.name ?? "전체 상품",
+      source: parsed.location ? "검색어 위치" : parsed.product ? "상품 검색" : "기본 검색",
+    });
+    setLocationMessage(parsed.location
+      ? `${parsed.location.label} 기준으로 주변 매장을 거리순 정렬했습니다.`
+      : "위치어가 없는 검색입니다. 내 위치 또는 기본 지도 위치 기준으로 표시합니다.");
   };
 
   const requestCurrentLocation = () => {
@@ -118,6 +159,7 @@ function ConsumerHomePage() {
         setUserLocation(nextLocation);
         setIsLocating(false);
         setLocationMessage(`현재 위치 기준으로 주변 매장을 거리순 정렬했습니다. (${nextLocation.latitude.toFixed(4)}, ${nextLocation.longitude.toFixed(4)})`);
+        setSearchContext((current) => ({ ...current, locationLabel: "현재 위치", source: "내 위치" }));
         setMapFocusTarget({ type: "user", id: Date.now() });
       },
       () => {
@@ -133,7 +175,7 @@ function ConsumerHomePage() {
       <ConsumerHeader onRequestLocation={requestCurrentLocation} isLocating={isLocating} />
       <main className="consumer-layout">
         <aside className="consumer-panel">
-          <label className="search-box">
+          <form className="search-box" onSubmit={submitSearch}>
             상품 검색
             <div className="input-with-icon">
               <Search size={18} />
@@ -143,14 +185,22 @@ function ConsumerHomePage() {
                   setQuery(event.target.value);
                   setSelectedProductId(null);
                 }}
-                placeholder="버터떡, 두쫀쿠 검색"
+                placeholder="예: 부평역 주변 버터떡"
               />
+              <button className="search-submit-button" type="submit">검색</button>
             </div>
-          </label>
+          </form>
 
           <div className="location-feedback">
             <Navigation size={16} />
             <span>{locationMessage}</span>
+          </div>
+
+          <div className="search-context-card">
+            <strong>검색 기준</strong>
+            <span>위치: {searchContext.locationLabel}</span>
+            <span>상품: {searchContext.productLabel}</span>
+            <em>{searchContext.source}</em>
           </div>
 
           <section>
