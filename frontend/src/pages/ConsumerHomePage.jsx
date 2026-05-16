@@ -140,17 +140,25 @@ function ConsumerHomePage() {
         <div className="map-stage">
           <KakaoMap stores={visibleStores} selectedStoreId={selectedStoreId} onSelectStore={handleSelectStore} />
           {selectedStore && selectedInventory && selectedProduct && (
-            <article className="map-store-popup linked-popup">
-              <div className="popup-title-row">
-                <strong>{selectedStore.name}</strong>
-                <span><LocateFixed size={14} /> {selectedStore.distance}</span>
-              </div>
-              <span>{selectedProduct.name} · 예약 가능 {selectedInventory.reservableStock}개</span>
-              <span>{selectedStore.address}</span>
-              <Link className="primary-button small" to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct.id}`}>
-                이 매장에서 예약하기
-              </Link>
-            </article>
+            <div className="map-overlay-layer">
+              <article className="selected-store-panel">
+                <div className="popup-title-row">
+                  <strong>{selectedStore.name}</strong>
+                  <span><LocateFixed size={14} /> {selectedStore.distance}</span>
+                </div>
+                <div className="selected-store-product">
+                  <ProductThumb name={selectedProduct.name} />
+                  <div>
+                    <strong>{selectedProduct.name}</strong>
+                    <span>예약 가능 {selectedInventory.reservableStock}개</span>
+                  </div>
+                </div>
+                <span className="selected-store-address">{selectedStore.address}</span>
+                <Link className="primary-button small" to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct.id}`}>
+                  이 매장에서 예약하기
+                </Link>
+              </article>
+            </div>
           )}
         </div>
       </main>
