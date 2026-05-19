@@ -19,18 +19,36 @@ function normalizeSearchText(value = "") {
   return String(value).trim().replace(/\s+/g, "").toLowerCase();
 }
 
+const LOCATION_INTENT_WORDS = ["맛집", "추천", "예약", "파는곳", "근처", "주변", "인근", "쪽", "에서"];
+
+function sanitizeLocationCandidate(value = "") {
+  let candidate = String(value).trim();
+
+  for (const word of LOCATION_INTENT_WORDS) {
+    candidate = candidate.replace(new RegExp(`\\s*${word}\\s*$`), "");
+  }
+
+  return candidate.trim();
+}
+
+function isCacheableLocationCandidate(value = "") {
+  const normalized = normalizeSearchText(value);
+  if (normalized.length < 2 || normalized.length > 20) return false;
+  return !LOCATION_INTENT_WORDS.includes(normalized);
+}
+
 function extractLocationCandidate(rawQuery) {
   const query = String(rawQuery).trim();
   const locationPattern = /(.+?)(?:\s*(?:주변|근처|인근|쪽|에서)\s*)/;
   const matched = query.match(locationPattern);
 
   if (matched?.[1]) {
-    return matched[1].trim();
+    return sanitizeLocationCandidate(matched[1]);
   }
 
   const stationMatched = query.match(/([가-힣A-Za-z0-9]+역)/);
   if (stationMatched?.[1]) {
-    return stationMatched[1].trim();
+    return sanitizeLocationCandidate(stationMatched[1]);
   }
 
   return null;
@@ -49,24 +67,6 @@ function calculateDistanceKm(from, to) {
 }
 
 async function findLocationFromQuery(rawQuery, fallbackLat, fallbackLng, { allowRawQueryLookup = false } = {}) {
-  const [locations] = await pool.query(
-    `SELECT query, query_normalized, latitude, longitude, source
-       FROM location_cache
-      ORDER BY CHAR_LENGTH(query_normalized) DESC`
-  );
-
-  const normalizedQuery = normalizeSearchText(rawQuery);
-  const matched = locations.find((location) => normalizedQuery.includes(location.query_normalized));
-
-  if (matched) {
-    return {
-      query: matched.query,
-      latitude: Number(matched.latitude),
-      longitude: Number(matched.longitude),
-      source: matched.source,
-    };
-  }
-
   const locationCandidate = extractLocationCandidate(rawQuery);
 
   if (locationCandidate) {
@@ -75,7 +75,7 @@ async function findLocationFromQuery(rawQuery, fallbackLat, fallbackLng, { allow
   }
 
   if (allowRawQueryLookup) {
-    const searched = await findLocationByText(rawQuery);
+    const searched = await findLocationByText(sanitizeLocationCandidate(rawQuery));
     if (searched) return searched;
   }
 
@@ -92,6 +92,10 @@ async function findLocationFromQuery(rawQuery, fallbackLat, fallbackLng, { allow
 }
 
 async function findLocationByText(locationText) {
+  if (!isCacheableLocationCandidate(locationText)) {
+    return null;
+  }
+
   const normalized = normalizeSearchText(locationText);
 
   const [cacheRows] = await pool.query(
