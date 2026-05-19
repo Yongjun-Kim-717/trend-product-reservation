@@ -21,7 +21,7 @@ export function ConsumerHeader({ onRequestLocation, isLocating }) {
       <button className="ghost-button" onClick={onRequestLocation} disabled={isLocating} type="button">
         {isLocating ? "위치 확인 중" : "내 위치"}
       </button>
-      <NavLink className="text-link" to="/consumer/reservations/new">내 예약</NavLink>
+      <NavLink className="text-link" to="/consumer/reservations">내 예약</NavLink>
     </AppHeader>
   );
 }

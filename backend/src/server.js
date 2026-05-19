@@ -1,4 +1,4 @@
-﻿import express from "express";
+import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import { pool } from "./config/db.js";
@@ -11,33 +11,428 @@ const port = Number(process.env.PORT ?? 4000);
 app.use(cors());
 app.use(express.json());
 
+function ok(data, message = "success") {
+  return { data, message };
+}
+
+function normalizeSearchText(value = "") {
+  return String(value).trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function extractLocationCandidate(rawQuery) {
+  const query = String(rawQuery).trim();
+  const locationPattern = /(.+?)(?:\s*(?:주변|근처|인근|쪽|에서)\s*)/;
+  const matched = query.match(locationPattern);
+
+  if (matched?.[1]) {
+    return matched[1].trim();
+  }
+
+  const stationMatched = query.match(/([가-힣A-Za-z0-9]+역)/);
+  if (stationMatched?.[1]) {
+    return stationMatched[1].trim();
+  }
+
+  return null;
+}
+
+function calculateDistanceKm(from, to) {
+  if (!from || !to) return null;
+  const earthRadiusKm = 6371;
+  const latDistance = ((Number(to.latitude) - Number(from.latitude)) * Math.PI) / 180;
+  const lngDistance = ((Number(to.longitude) - Number(from.longitude)) * Math.PI) / 180;
+  const fromLat = (Number(from.latitude) * Math.PI) / 180;
+  const toLat = (Number(to.latitude) * Math.PI) / 180;
+  const a = Math.sin(latDistance / 2) ** 2
+    + Math.cos(fromLat) * Math.cos(toLat) * Math.sin(lngDistance / 2) ** 2;
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+async function findLocationFromQuery(rawQuery, fallbackLat, fallbackLng, { allowRawQueryLookup = false } = {}) {
+  const [locations] = await pool.query(
+    `SELECT query, query_normalized, latitude, longitude, source
+       FROM location_cache
+      ORDER BY CHAR_LENGTH(query_normalized) DESC`
+  );
+
+  const normalizedQuery = normalizeSearchText(rawQuery);
+  const matched = locations.find((location) => normalizedQuery.includes(location.query_normalized));
+
+  if (matched) {
+    return {
+      query: matched.query,
+      latitude: Number(matched.latitude),
+      longitude: Number(matched.longitude),
+      source: matched.source,
+    };
+  }
+
+  const locationCandidate = extractLocationCandidate(rawQuery);
+
+  if (locationCandidate) {
+    const cached = await findLocationByText(locationCandidate);
+    if (cached) return cached;
+  }
+
+  if (allowRawQueryLookup) {
+    const searched = await findLocationByText(rawQuery);
+    if (searched) return searched;
+  }
+
+  if (fallbackLat && fallbackLng) {
+    return {
+      query: "현재 위치",
+      latitude: Number(fallbackLat),
+      longitude: Number(fallbackLng),
+      source: "CLIENT_LOCATION",
+    };
+  }
+
+  return null;
+}
+
+async function findLocationByText(locationText) {
+  const normalized = normalizeSearchText(locationText);
+
+  const [cacheRows] = await pool.query(
+    `SELECT query, latitude, longitude, source
+       FROM location_cache
+      WHERE query_normalized = ?
+      LIMIT 1`,
+    [normalized]
+  );
+
+  if (cacheRows.length > 0) {
+    return {
+      query: cacheRows[0].query,
+      latitude: Number(cacheRows[0].latitude),
+      longitude: Number(cacheRows[0].longitude),
+      source: cacheRows[0].source,
+    };
+  }
+
+  const kakaoKey = process.env.KAKAO_REST_API_KEY;
+  if (!kakaoKey || kakaoKey === "your_kakao_rest_api_key") {
+    return null;
+  }
+
+  const url = new URL("https://dapi.kakao.com/v2/local/search/keyword.json");
+  url.searchParams.set("query", locationText);
+  url.searchParams.set("size", "1");
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `KakaoAK ${kakaoKey}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error("Kakao Local REST API request failed.");
+  }
+
+  const payload = await response.json();
+  const place = payload.documents?.[0];
+  if (!place) return null;
+
+  const location = {
+    query: locationText,
+    latitude: Number(place.y),
+    longitude: Number(place.x),
+    source: "KAKAO_LOCAL",
+  };
+
+  await pool.query(
+    `INSERT INTO location_cache (query, query_normalized, latitude, longitude, source)
+     VALUES (?, ?, ?, ?, 'KAKAO_LOCAL')
+     ON DUPLICATE KEY UPDATE
+       latitude = VALUES(latitude),
+       longitude = VALUES(longitude),
+       source = 'KAKAO_LOCAL',
+       updated_at = CURRENT_TIMESTAMP`,
+    [location.query, normalized, location.latitude, location.longitude]
+  );
+
+  return location;
+}
+
+async function findKeywordFromQuery(rawQuery) {
+  const normalizedQuery = normalizeSearchText(rawQuery);
+
+  const [keywordRows] = await pool.query(
+    `SELECT keyword_id, keyword_name
+       FROM keywords
+      WHERE ? LIKE CONCAT('%', REPLACE(LOWER(keyword_name), ' ', ''), '%')
+      ORDER BY CHAR_LENGTH(keyword_name) DESC
+      LIMIT 1`,
+    [normalizedQuery]
+  );
+
+  if (keywordRows.length > 0) {
+    return {
+      raw: keywordRows[0].keyword_name,
+      keyword_id: keywordRows[0].keyword_id,
+      keyword_name: keywordRows[0].keyword_name,
+      mapped: true,
+    };
+  }
+
+  const [aliasRows] = await pool.query(
+    `SELECT k.keyword_id, k.keyword_name, ka.alias
+       FROM keyword_aliases ka
+       JOIN keywords k ON k.keyword_id = ka.keyword_id
+      WHERE ? LIKE CONCAT('%', ka.alias_normalized, '%')
+      ORDER BY CHAR_LENGTH(ka.alias_normalized) DESC
+      LIMIT 1`,
+    [normalizedQuery]
+  );
+
+  if (aliasRows.length > 0) {
+    return {
+      raw: aliasRows[0].alias,
+      keyword_id: aliasRows[0].keyword_id,
+      keyword_name: aliasRows[0].keyword_name,
+      mapped: true,
+    };
+  }
+
+  return {
+    raw: rawQuery,
+    keyword_id: null,
+    keyword_name: null,
+    mapped: false,
+  };
+}
+
+async function logSearch({ userId, rawQuery, keyword, location, resultCount }) {
+  const mappingStatus = keyword.mapped ? "MAPPED" : "UNMAPPED";
+
+  await pool.query(
+    `INSERT INTO search_logs (user_id, keyword_id, raw_query, location_query, result_count, mapping_status)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [userId || null, keyword.keyword_id, rawQuery, location?.query ?? null, resultCount, mappingStatus]
+  );
+
+  if (!keyword.mapped) {
+    const normalized = normalizeSearchText(rawQuery);
+    await pool.query(
+      `INSERT INTO unmapped_searches (raw_query, raw_query_normalized, count, status)
+       VALUES (?, ?, 1, 'PENDING')
+       ON DUPLICATE KEY UPDATE count = count + 1, last_seen_at = CURRENT_TIMESTAMP`,
+      [rawQuery, normalized]
+    );
+  }
+}
+
 app.get("/api/health", async (_req, res) => {
-  const [rows] = await pool.query("SELECT 1 AS ok");
-  res.json({ status: "ok", db: rows[0].ok === 1 });
+  try {
+    const [rows] = await pool.query("SELECT 1 AS ok");
+    res.json({ status: "ok", db: rows[0].ok === 1 });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ status: "error", db: false });
+  }
 });
 
 app.get("/api/products", async (_req, res) => {
-  const [rows] = await pool.query("SELECT product_id, name, description, created_at FROM products ORDER BY created_at DESC");
-  res.json(rows);
+  const [rows] = await pool.query(
+    `SELECT p.product_id, p.name, c.name AS category, p.description, p.price, p.image_url, p.status
+       FROM products p
+       LEFT JOIN product_categories c ON c.category_id = p.category_id
+      WHERE p.status = 'ACTIVE'
+      ORDER BY p.product_id`
+  );
+  res.json(ok(rows));
+});
+
+app.get("/api/products/trending", async (_req, res) => {
+  const [rows] = await pool.query(
+    `SELECT p.product_id, p.name, k.keyword_name, k.trend_score, p.image_url
+       FROM keywords k
+       JOIN products p ON p.name = k.keyword_name
+      WHERE k.status = 'ACTIVE' AND p.status = 'ACTIVE'
+      ORDER BY k.trend_score DESC, p.product_id ASC
+      LIMIT 10`
+  );
+  res.json(ok(rows));
+});
+
+app.get("/api/search", async (req, res) => {
+  const rawQuery = String(req.query.query ?? "").trim();
+  const radiusKm = Number(req.query.radiusKm ?? 5);
+
+  if (!rawQuery) {
+    return res.status(400).json({ message: "query is required.", code: "QUERY_REQUIRED" });
+  }
+
+  const keyword = await findKeywordFromQuery(rawQuery);
+  const location = await findLocationFromQuery(rawQuery, req.query.lat, req.query.lng, {
+    allowRawQueryLookup: !keyword.keyword_id,
+  });
+
+  const params = [];
+  let productWhere = "";
+
+  if (keyword.keyword_id) {
+    productWhere = "AND p.name = ?";
+    params.push(keyword.keyword_name);
+  }
+
+  const [rows] = await pool.query(
+    `SELECT s.store_id, s.name AS store_name, s.address, s.latitude, s.longitude,
+            i.inventory_id, i.product_id, p.name AS product_name, p.image_url,
+            i.total_stock, i.reservable_stock, i.reserved_stock
+       FROM stores s
+       JOIN inventories i ON i.store_id = s.store_id
+       JOIN products p ON p.product_id = i.product_id
+      WHERE s.approval_status = 'APPROVED'
+        AND p.status = 'ACTIVE'
+        ${productWhere}
+      ORDER BY s.store_id, i.inventory_id`,
+    params
+  );
+
+  const stores = rows
+    .map((row) => {
+      const distanceKm = location ? calculateDistanceKm(location, row) : null;
+      return {
+        store_id: row.store_id,
+        name: row.store_name,
+        address: row.address,
+        latitude: Number(row.latitude),
+        longitude: Number(row.longitude),
+        distance_km: distanceKm === null ? null : Number(distanceKm.toFixed(2)),
+        inventory: {
+          inventory_id: row.inventory_id,
+          product_id: row.product_id,
+          product_name: row.product_name,
+          image_url: row.image_url,
+          total_stock: row.total_stock,
+          reservable_stock: row.reservable_stock,
+          reserved_stock: row.reserved_stock,
+        },
+      };
+    })
+    .filter((store) => store.distance_km !== null && store.distance_km <= radiusKm)
+    .sort((a, b) => {
+      if (a.distance_km === null || b.distance_km === null) return 0;
+      return a.distance_km - b.distance_km;
+    });
+
+  await logSearch({
+    userId: req.query.userId,
+    rawQuery,
+    keyword,
+    location,
+    resultCount: stores.length,
+  });
+
+  res.json(ok({ location, keyword, radius_km: radiusKm, stores }));
+});
+
+app.get("/api/stores/nearby", async (req, res) => {
+  const lat = req.query.lat ? Number(req.query.lat) : null;
+  const lng = req.query.lng ? Number(req.query.lng) : null;
+  const productId = req.query.productId ? Number(req.query.productId) : null;
+  const radiusKm = Number(req.query.radiusKm ?? 5);
+  const location = lat && lng
+    ? { query: "현재 위치", latitude: lat, longitude: lng, source: "CLIENT_LOCATION" }
+    : null;
+  const params = [];
+  let productWhere = "";
+
+  if (productId) {
+    productWhere = "AND p.product_id = ?";
+    params.push(productId);
+  }
+
+  const [rows] = await pool.query(
+    `SELECT s.store_id, s.name AS store_name, s.address, s.latitude, s.longitude,
+            i.inventory_id, i.product_id, p.name AS product_name, p.image_url,
+            i.total_stock, i.reservable_stock, i.reserved_stock
+       FROM stores s
+       JOIN inventories i ON i.store_id = s.store_id
+       JOIN products p ON p.product_id = i.product_id
+      WHERE s.approval_status = 'APPROVED'
+        AND p.status = 'ACTIVE'
+        ${productWhere}
+      ORDER BY s.store_id, i.inventory_id`,
+    params
+  );
+
+  const stores = rows
+    .map((row) => {
+      const distanceKm = location ? calculateDistanceKm(location, row) : null;
+      return {
+        store_id: row.store_id,
+        name: row.store_name,
+        address: row.address,
+        latitude: Number(row.latitude),
+        longitude: Number(row.longitude),
+        distance_km: distanceKm === null ? null : Number(distanceKm.toFixed(2)),
+        inventory: {
+          inventory_id: row.inventory_id,
+          product_id: row.product_id,
+          product_name: row.product_name,
+          image_url: row.image_url,
+          total_stock: row.total_stock,
+          reservable_stock: row.reservable_stock,
+          reserved_stock: row.reserved_stock,
+        },
+      };
+    })
+    .filter((store) => store.distance_km === null || store.distance_km <= radiusKm)
+    .sort((a, b) => {
+      if (a.distance_km === null || b.distance_km === null) return 0;
+      return a.distance_km - b.distance_km;
+    });
+
+  res.json(ok({ location, radius_km: radiusKm, stores }));
 });
 
 app.get("/api/stores/:storeId/inventories", async (req, res) => {
   const [rows] = await pool.query(
     `SELECT i.inventory_id, i.store_id, i.product_id, p.name AS product_name,
-            i.total_stock, i.reservable_stock, i.reserved_stock
+            p.image_url, i.total_stock, i.reservable_stock, i.reserved_stock
        FROM inventories i
        JOIN products p ON p.product_id = i.product_id
-      WHERE i.store_id = ?`,
+      WHERE i.store_id = ?
+      ORDER BY i.inventory_id`,
     [req.params.storeId]
   );
-  res.json(rows);
+  res.json(ok(rows));
+});
+
+app.get("/api/stores/:storeId", async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT store_id, seller_id, name, address, latitude, longitude, phone, opening_hours, approval_status
+       FROM stores
+      WHERE store_id = ?`,
+    [req.params.storeId]
+  );
+
+  if (rows.length === 0) {
+    return res.status(404).json({ message: "Store not found.", code: "STORE_NOT_FOUND" });
+  }
+
+  res.json(ok({
+    ...rows[0],
+    latitude: Number(rows[0].latitude),
+    longitude: Number(rows[0].longitude),
+  }));
 });
 
 app.post("/api/reservations", async (req, res) => {
-  const { userId, inventoryId, quantity } = req.body;
+  const userId = Number(req.body.user_id ?? req.body.userId);
+  const inventoryId = Number(req.body.inventory_id ?? req.body.inventoryId);
+  const quantity = Number(req.body.quantity);
+  const visitTime = req.body.visit_time ?? req.body.visitTime ?? null;
+  const requestNote = req.body.request_note ?? req.body.requestNote ?? null;
 
   if (!userId || !inventoryId || !Number.isInteger(quantity) || quantity <= 0) {
-    return res.status(400).json({ message: "userId, inventoryId, positive quantity are required." });
+    return res.status(400).json({
+      message: "user_id, inventory_id, positive integer quantity are required.",
+      code: "INVALID_RESERVATION_REQUEST",
+    });
   }
 
   const connection = await pool.getConnection();
@@ -46,42 +441,140 @@ app.post("/api/reservations", async (req, res) => {
     await connection.beginTransaction();
 
     const [inventoryRows] = await connection.query(
-      "SELECT inventory_id, store_id, product_id, reservable_stock FROM inventories WHERE inventory_id = ? FOR UPDATE",
+      `SELECT inventory_id, reservable_stock
+         FROM inventories
+        WHERE inventory_id = ?
+        FOR UPDATE`,
       [inventoryId]
     );
 
     if (inventoryRows.length === 0) {
       await connection.rollback();
-      return res.status(404).json({ message: "Inventory not found." });
+      return res.status(404).json({ message: "Inventory not found.", code: "INVENTORY_NOT_FOUND" });
     }
 
-    const inventory = inventoryRows[0];
+    const [updateResult] = await connection.query(
+      `UPDATE inventories
+          SET reservable_stock = reservable_stock - ?,
+              reserved_stock = reserved_stock + ?
+        WHERE inventory_id = ?
+          AND reservable_stock >= ?`,
+      [quantity, quantity, inventoryId, quantity]
+    );
 
-    if (inventory.reservable_stock < quantity) {
+    if (updateResult.affectedRows !== 1) {
       await connection.rollback();
-      return res.status(409).json({ message: "Not enough reservable stock." });
+      return res.status(409).json({ message: "예약 가능 재고가 부족합니다.", code: "INSUFFICIENT_STOCK" });
+    }
+
+    const [insertResult] = await connection.query(
+      `INSERT INTO reservations (user_id, inventory_id, quantity, status, visit_time, request_note)
+       VALUES (?, ?, ?, 'PENDING', ?, ?)`,
+      [userId, inventoryId, quantity, visitTime, requestNote]
+    );
+
+    await connection.query(
+      `INSERT INTO reservation_status_logs
+       (reservation_id, previous_status, new_status, changed_by_user_id, changed_by_role, reason)
+       VALUES (?, NULL, 'PENDING', ?, 'CONSUMER', '예약 생성')`,
+      [insertResult.insertId, userId]
+    );
+
+    const [remainingRows] = await connection.query(
+      "SELECT reservable_stock FROM inventories WHERE inventory_id = ?",
+      [inventoryId]
+    );
+
+    await connection.commit();
+
+    res.status(201).json(ok({
+      reservation_id: insertResult.insertId,
+      status: "PENDING",
+      remaining_reservable_stock: remainingRows[0].reservable_stock,
+    }, "예약 요청이 완료되었습니다."));
+  } catch (error) {
+    await connection.rollback();
+    console.error(error);
+    res.status(500).json({ message: "Failed to create reservation.", code: "RESERVATION_CREATE_FAILED" });
+  } finally {
+    connection.release();
+  }
+});
+
+app.get("/api/users/:userId/reservations", async (req, res) => {
+  const [rows] = await pool.query(
+    `SELECT r.reservation_id, r.user_id, r.inventory_id, r.quantity, r.status,
+            r.visit_time, r.request_note, r.created_at,
+            s.name AS store_name, p.name AS product_name, p.image_url
+       FROM reservations r
+       JOIN inventories i ON i.inventory_id = r.inventory_id
+       JOIN stores s ON s.store_id = i.store_id
+       JOIN products p ON p.product_id = i.product_id
+      WHERE r.user_id = ?
+      ORDER BY r.created_at DESC`,
+    [req.params.userId]
+  );
+  res.json(ok(rows));
+});
+
+app.patch("/api/reservations/:reservationId/cancel", async (req, res) => {
+  const reservationId = Number(req.params.reservationId);
+  const userId = Number(req.body.user_id ?? req.body.userId) || null;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [reservationRows] = await connection.query(
+      `SELECT reservation_id, inventory_id, quantity, status
+         FROM reservations
+        WHERE reservation_id = ?
+        FOR UPDATE`,
+      [reservationId]
+    );
+
+    if (reservationRows.length === 0) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Reservation not found.", code: "RESERVATION_NOT_FOUND" });
+    }
+
+    const reservation = reservationRows[0];
+
+    if (!["PENDING", "APPROVED"].includes(reservation.status)) {
+      await connection.rollback();
+      return res.status(409).json({ message: "취소할 수 없는 예약 상태입니다.", code: "INVALID_RESERVATION_STATUS" });
     }
 
     await connection.query(
       `UPDATE inventories
-          SET reservable_stock = reservable_stock - ?,
-              reserved_stock = reserved_stock + ?
-        WHERE inventory_id = ?`,
-      [quantity, quantity, inventoryId]
+          SET reservable_stock = reservable_stock + ?,
+              reserved_stock = reserved_stock - ?
+        WHERE inventory_id = ?
+          AND reserved_stock >= ?`,
+      [reservation.quantity, reservation.quantity, reservation.inventory_id, reservation.quantity]
     );
 
-    const [result] = await connection.query(
-      `INSERT INTO reservations (user_id, inventory_id, store_id, product_id, quantity, status)
-       VALUES (?, ?, ?, ?, ?, 'CONFIRMED')`,
-      [userId, inventoryId, inventory.store_id, inventory.product_id, quantity]
+    await connection.query(
+      `UPDATE reservations
+          SET status = 'CANCELED',
+              canceled_at = CURRENT_TIMESTAMP
+        WHERE reservation_id = ?`,
+      [reservationId]
+    );
+
+    await connection.query(
+      `INSERT INTO reservation_status_logs
+       (reservation_id, previous_status, new_status, changed_by_user_id, changed_by_role, reason)
+       VALUES (?, ?, 'CANCELED', ?, 'CONSUMER', '예약 취소')`,
+      [reservationId, reservation.status, userId]
     );
 
     await connection.commit();
-    res.status(201).json({ reservationId: result.insertId, status: "CONFIRMED" });
+    res.json(ok({ reservation_id: reservationId, status: "CANCELED" }, "예약이 취소되었습니다."));
   } catch (error) {
     await connection.rollback();
     console.error(error);
-    res.status(500).json({ message: "Failed to create reservation." });
+    res.status(500).json({ message: "Failed to cancel reservation.", code: "RESERVATION_CANCEL_FAILED" });
   } finally {
     connection.release();
   }

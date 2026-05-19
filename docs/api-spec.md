@@ -2,7 +2,7 @@
 
 Base URL: `http://localhost:4000/api`
 
-최종 수정일: 2026-05-17
+최종 수정일: 2026-05-19
 
 ## 1. 공통 규칙
 
@@ -67,7 +67,7 @@ Response:
 
 ## 3. 통합 검색 API
 
-### GET /search?query=부평역%20주변%20버터떡
+### GET /search?query=부평역%20주변%20버터떡&lat=37.4904&lng=126.7248&radiusKm=5
 
 소비자 메인 화면의 핵심 검색 API이다.
 
@@ -104,17 +104,29 @@ Response:
 Query Parameters:
 
 ```text
-query: 사용자 검색어
-lat: 사용자 현재 위치 위도, 선택값
-lng: 사용자 현재 위치 경도, 선택값
+query: 사용자 검색어, 필수
+lat: 사용자 현재 기준 위치 위도, 선택값
+lng: 사용자 현재 기준 위치 경도, 선택값
+radiusKm: 검색 반경 km, 선택값, 기본 5
 ```
 
 위치 기준 결정 우선순위:
 
 ```text
-1. query 안에서 추출한 위치어: 예) 부평역, 성수역
-2. lat/lng 파라미터: 브라우저 Geolocation 또는 사용자가 설정한 기본 위치
-3. 서비스 기본 위치: 개발 초기 fallback 좌표
+1. location_cache에 이미 저장된 위치어가 query에 포함되어 있으면 해당 좌표 사용
+2. "부평역 주변", "송도 근처", "인하대학교 후문 맛집"처럼 장소 검색 의도가 있으면 Kakao Local REST API로 좌표 조회
+3. 상품명만 검색한 경우 lat/lng 파라미터를 기준 위치로 사용
+4. 위치를 찾지 못하고 lat/lng도 없으면 location은 null이며 매장 목록은 반환하지 않는다
+```
+
+중요 정책:
+
+```text
+- 장소 좌표는 백엔드에서만 Kakao Local REST API로 조회한다.
+- 조회된 좌표는 location_cache에 저장해 다음 검색부터 API 호출을 줄인다.
+- 위치를 확정할 수 없는 검색어는 전체 매장을 반환하지 않는다.
+- 반경 안 매장이 없으면 location은 반환하고 stores는 빈 배열로 반환한다.
+- 프론트는 location을 기준으로 지도를 이동시키고, stores가 비어 있으면 "주변 매장 없음" 상태를 표시한다.
 ```
 
 위치어가 포함되지 않은 검색어 예시:
@@ -142,6 +154,7 @@ Response:
       "keyword_name": "버터떡",
       "mapped": true
     },
+    "radius_km": 5,
     "stores": [
       {
         "store_id": 1,
@@ -223,7 +236,7 @@ Response:
 
 ## 5. Store API
 
-### GET /stores/nearby?lat=37.4895&lng=126.7247&productId=1
+### GET /stores/nearby?lat=37.4895&lng=126.7247&productId=1&radiusKm=5
 
 좌표와 상품 기준으로 주변 매장을 조회한다.
 
@@ -233,6 +246,7 @@ Query Parameters:
 lat: 기준 위도
 lng: 기준 경도
 productId: 선택 상품 ID, 선택값
+radiusKm: 검색 반경 km, 선택값, 기본 5
 ```
 
 Response:
@@ -246,7 +260,16 @@ Response:
       "address": "서울 성동구 성수이로 10",
       "latitude": 37.544581,
       "longitude": 127.055961,
-      "distance_km": 28.4
+      "distance_km": 0.08,
+      "inventory": {
+        "inventory_id": 1,
+        "product_id": 1,
+        "product_name": "버터떡",
+        "image_url": "/uploads/products/butter-rice-cake.jpg",
+        "total_stock": 40,
+        "reservable_stock": 18,
+        "reserved_stock": 6
+      }
     }
   ]
 }

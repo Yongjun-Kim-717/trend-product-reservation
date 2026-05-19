@@ -1,9 +1,15 @@
-﻿import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { LocateFixed, Navigation, Search, X } from "lucide-react";
+import { AlertCircle, LocateFixed, Navigation, Search, X } from "lucide-react";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import KakaoMap from "../components/KakaoMap.jsx";
-import { mockLocationQueries, nearbyStores, products } from "../data/mockData.js";
+import { getNearbyStores, getProducts, searchStores } from "../api/client.js";
+
+const DEFAULT_LOCATION = {
+  label: "부평역",
+  latitude: 37.4904,
+  longitude: 126.7248,
+};
 
 function ProductThumb({ name }) {
   return <div className="product-thumb" aria-hidden="true">{name.slice(0, 1)}</div>;
@@ -13,7 +19,7 @@ function getStoreMatch(store, selectedProductId) {
   const inventory = selectedProductId
     ? store.inventories.find((item) => item.productId === selectedProductId)
     : store.inventories[0];
-  const product = products.find((item) => item.id === inventory?.productId);
+  const product = inventory?.product ?? store.products?.find((item) => item.id === inventory?.productId);
   return { inventory, product };
 }
 
@@ -34,37 +40,78 @@ function formatDistance(distanceKm, fallbackDistance) {
   return `${distanceKm.toFixed(1)}km`;
 }
 
-function parseMockSearch(rawQuery) {
-  const locationEntry = Object.entries(mockLocationQueries).find(([locationName]) => rawQuery.includes(locationName));
-  const product = products.find((item) => rawQuery.includes(item.name));
+function toProductModel(product) {
+  return {
+    id: product.product_id,
+    name: product.name,
+    category: product.category ?? "기타",
+    description: product.description ?? "",
+    imageUrl: product.image_url ?? "",
+    trendBadge: "DB",
+  };
+}
+
+function toStoreModel(store) {
+  const product = {
+    id: store.inventory.product_id,
+    name: store.inventory.product_name,
+    category: "유행 상품",
+    description: `${store.inventory.product_name} 예약 가능 매장입니다.`,
+    imageUrl: store.inventory.image_url ?? "",
+    trendBadge: "검색",
+  };
 
   return {
-    location: locationEntry ? locationEntry[1] : null,
-    product: product ?? null,
+    id: store.store_id,
+    name: store.name,
+    address: store.address,
+    distance: store.distance_km === null
+      ? "거리 정보 없음"
+      : store.distance_km < 1
+        ? `${Math.round(store.distance_km * 1000)}m`
+        : `${store.distance_km.toFixed(1)}km`,
+    latitude: store.latitude,
+    longitude: store.longitude,
+    openingHours: "매장 정보 확인 필요",
+    products: [product],
+    inventories: [
+      {
+        inventoryId: store.inventory.inventory_id,
+        productId: store.inventory.product_id,
+        totalStock: store.inventory.total_stock,
+        reservableStock: store.inventory.reservable_stock,
+        reservedStock: store.inventory.reserved_stock,
+        product,
+      },
+    ],
   };
 }
 
 function ConsumerHomePage() {
   const [query, setQuery] = useState("");
+  const [products, setProducts] = useState([]);
+  const [nearbyStores, setNearbyStores] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState(null);
-  const [selectedStoreId, setSelectedStoreId] = useState(nearbyStores[0].id);
+  const [selectedStoreId, setSelectedStoreId] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
-  const [locationMessage, setLocationMessage] = useState("내 위치를 설정하면 주변 매장이 거리순으로 정렬됩니다.");
-  const [mapFocusTarget, setMapFocusTarget] = useState({ type: "store", id: nearbyStores[0].id });
+  const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
+  const [locationMessage, setLocationMessage] = useState("기본 위치 기준 주변 매장을 표시합니다. 내 위치 버튼을 누르거나 검색어를 입력해 기준을 바꿀 수 있습니다.");
+  const [mapFocusTarget, setMapFocusTarget] = useState(null);
   const [searchContext, setSearchContext] = useState({
-    locationLabel: "기본 지도 위치",
+    locationLabel: DEFAULT_LOCATION.label,
     productLabel: "전체 상품",
-    source: "기본",
+    source: "기본 위치 + DB",
   });
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
     if (!normalizedQuery) return products;
-    return products.filter((product) => product.name.toLowerCase().includes(normalizedQuery));
-  }, [query]);
+    return products.filter((product) => normalizedQuery.includes(product.name.toLowerCase()) || product.name.toLowerCase().includes(normalizedQuery));
+  }, [products, query]);
 
-  const activeProductId = selectedProductId ?? filteredProducts[0]?.id ?? null;
+  const activeProductId = selectedProductId;
   const activeProduct = products.find((product) => product.id === activeProductId);
 
   const matchedStores = useMemo(() => {
@@ -87,59 +134,127 @@ function ConsumerHomePage() {
         if (a.distanceKm === null || b.distanceKm === null) return 0;
         return a.distanceKm - b.distanceKm;
       });
-  }, [activeProductId, userLocation]);
+  }, [activeProductId, nearbyStores, userLocation]);
 
-  const visibleStores = matchedStores.length ? matchedStores : nearbyStores.map((store) => ({ ...store, match: getStoreMatch(store, null), distanceKm: null, displayDistance: store.distance }));
+  const visibleStores = matchedStores;
 
   useEffect(() => {
-    if (!visibleStores.some((store) => store.id === selectedStoreId)) {
-      setSelectedStoreId(visibleStores[0]?.id ?? nearbyStores[0].id);
+    if (visibleStores.length > 0 && !visibleStores.some((store) => store.id === selectedStoreId)) {
+      setSelectedStoreId(visibleStores[0].id);
+      setMapFocusTarget({ type: "store", id: visibleStores[0].id });
     }
   }, [visibleStores, selectedStoreId]);
 
   const selectedStore = visibleStores.find((store) => store.id === selectedStoreId) ?? visibleStores[0];
   const selectedInventory = selectedStore?.match?.inventory ?? selectedStore?.inventories[0];
-  const selectedProduct = selectedStore?.match?.product ?? products.find((product) => product.id === selectedInventory?.productId);
+  const selectedProduct = selectedStore?.match?.product ?? selectedInventory?.product;
 
   const handleSelectStore = useCallback((storeId) => {
     setSelectedStoreId(storeId);
     setMapFocusTarget({ type: "store", id: storeId });
   }, []);
 
+  const applyStoreResult = useCallback((result, sourceLabel, productLabel = "전체 상품", nextActiveProductId = null) => {
+    const nextStores = result.stores.map(toStoreModel);
+
+    setNearbyStores(nextStores);
+    setSelectedProductId(nextActiveProductId);
+    setSelectedStoreId(nextStores[0]?.id ?? null);
+    setUserLocation(result.location ? { latitude: result.location.latitude, longitude: result.location.longitude } : null);
+    setMapFocusTarget(result.location ? { type: "user", id: `${result.location.query}-${Date.now()}` } : null);
+    setSearchContext({
+      locationLabel: result.location?.query ?? DEFAULT_LOCATION.label,
+      productLabel,
+      source: sourceLabel,
+    });
+    setLocationMessage(`${result.location?.query ?? DEFAULT_LOCATION.label} 기준으로 실제 DB 매장 ${nextStores.length}곳을 조회했습니다.`);
+  }, []);
+
+  const loadNearbyStores = useCallback(async ({ location = DEFAULT_LOCATION, productId = null, sourceLabel = "기본 위치 + DB" } = {}) => {
+    setIsSearching(true);
+    setSearchError("");
+
+    try {
+      const result = await getNearbyStores({
+        lat: location.latitude,
+        lng: location.longitude,
+        productId,
+        radiusKm: 5,
+      });
+      const productLabel = productId ? products.find((product) => product.id === productId)?.name ?? "선택 상품" : "전체 상품";
+      applyStoreResult({
+        ...result,
+        location: {
+          query: location.label,
+          latitude: location.latitude,
+          longitude: location.longitude,
+          source: sourceLabel,
+        },
+      }, sourceLabel, productLabel);
+    } catch (error) {
+      setNearbyStores([]);
+      setSelectedStoreId(null);
+      setSearchError(error.message);
+      setLocationMessage("주변 매장 조회에 실패했습니다. 서버와 DB 실행 상태를 확인해주세요.");
+    } finally {
+      setIsSearching(false);
+    }
+  }, [applyStoreResult, products]);
+
+  const runSearch = useCallback(async (nextQuery) => {
+    const searchQuery = nextQuery.trim();
+    if (!searchQuery) {
+      await loadNearbyStores();
+      return;
+    }
+
+    setIsSearching(true);
+    setSearchError("");
+
+    try {
+      const baseLocation = userLocation ?? DEFAULT_LOCATION;
+      const result = await searchStores(searchQuery, {
+        lat: baseLocation.latitude,
+        lng: baseLocation.longitude,
+        radiusKm: 5,
+      });
+      const activeProduct = result.stores[0]?.inventory?.product_id ?? null;
+      applyStoreResult(result, result.location ? "검색어 위치 + DB" : "기본 위치 + 상품 검색", result.keyword?.keyword_name ?? "전체 상품", activeProduct);
+    } catch (error) {
+      setNearbyStores([]);
+      setSelectedStoreId(null);
+      setSearchError(error.message);
+      setLocationMessage("백엔드 API 조회에 실패했습니다. 서버와 DB 실행 상태를 확인해주세요.");
+    } finally {
+      setIsSearching(false);
+    }
+  }, [applyStoreResult, loadNearbyStores, userLocation]);
+
+  useEffect(() => {
+    getProducts()
+      .then((rows) => setProducts(rows.map(toProductModel)))
+      .catch((error) => setSearchError(error.message));
+  }, []);
+
+  useEffect(() => {
+    loadNearbyStores();
+  }, [loadNearbyStores]);
+
   const handleSelectProduct = (product) => {
     setSelectedProductId(product.id);
     setQuery(product.name);
+    runSearch(product.name);
   };
 
   const clearProductFilter = () => {
     setSelectedProductId(null);
     setQuery("");
-    setSearchContext({ locationLabel: userLocation ? "현재 위치" : "기본 지도 위치", productLabel: "전체 상품", source: userLocation ? "내 위치" : "기본" });
+    loadNearbyStores();
   };
 
   const submitSearch = (event) => {
     event.preventDefault();
-    const parsed = parseMockSearch(query);
-
-    if (parsed.product) {
-      setSelectedProductId(parsed.product.id);
-    } else {
-      setSelectedProductId(null);
-    }
-
-    if (parsed.location) {
-      setUserLocation({ latitude: parsed.location.latitude, longitude: parsed.location.longitude });
-      setMapFocusTarget({ type: "user", id: `${parsed.location.label}-${Date.now()}` });
-    }
-
-    setSearchContext({
-      locationLabel: parsed.location?.label ?? (userLocation ? "현재 위치" : "기본 지도 위치"),
-      productLabel: parsed.product?.name ?? "전체 상품",
-      source: parsed.location ? "검색어 위치" : parsed.product ? "상품 검색" : "기본 검색",
-    });
-    setLocationMessage(parsed.location
-      ? `${parsed.location.label} 기준으로 주변 매장을 거리순 정렬했습니다.`
-      : "위치어가 없는 검색입니다. 내 위치 또는 기본 지도 위치 기준으로 표시합니다.");
+    runSearch(query);
   };
 
   const requestCurrentLocation = () => {
@@ -161,6 +276,7 @@ function ConsumerHomePage() {
         setLocationMessage(`현재 위치 기준으로 주변 매장을 거리순 정렬했습니다. (${nextLocation.latitude.toFixed(4)}, ${nextLocation.longitude.toFixed(4)})`);
         setSearchContext((current) => ({ ...current, locationLabel: "현재 위치", source: "내 위치" }));
         setMapFocusTarget({ type: "user", id: Date.now() });
+        loadNearbyStores({ location: { ...nextLocation, label: "현재 위치" }, sourceLabel: "내 위치 + DB" });
       },
       () => {
         setIsLocating(false);
@@ -185,9 +301,11 @@ function ConsumerHomePage() {
                   setQuery(event.target.value);
                   setSelectedProductId(null);
                 }}
-                placeholder="예: 부평역 주변 버터떡"
+                placeholder="상품명 또는 장소명 검색"
               />
-              <button className="search-submit-button" type="submit">검색</button>
+              <button className="search-submit-button" type="submit" disabled={isSearching}>
+                {isSearching ? "조회 중" : "검색"}
+              </button>
             </div>
           </form>
 
@@ -195,6 +313,8 @@ function ConsumerHomePage() {
             <Navigation size={16} />
             <span>{locationMessage}</span>
           </div>
+
+          {searchError && <div className="error-message"><AlertCircle size={18} /> {searchError}</div>}
 
           <div className="search-context-card">
             <strong>검색 기준</strong>
@@ -213,7 +333,7 @@ function ConsumerHomePage() {
               )}
             </div>
             <div className="chip-list">
-              {products.map((product) => (
+              {(products.length ? products : filteredProducts).map((product) => (
                 <button
                   className={`trend-chip ${activeProductId === product.id ? "selected" : ""}`}
                   key={product.id}
@@ -229,17 +349,22 @@ function ConsumerHomePage() {
 
           <section>
             <div className="section-title-row">
-              <h2>내 주변 매장</h2>
+              <h2>검색 결과 매장</h2>
               <span className="result-count">{visibleStores.length}곳</span>
             </div>
             <div className="store-list">
+              {visibleStores.length === 0 && (
+                <div className="warning-message">
+                  <AlertCircle size={18} /> 기준 위치 주변 5km 안에 예약 가능한 매장이 없습니다.
+                </div>
+              )}
               {visibleStores.map((store) => {
                 const inventory = store.match.inventory;
                 const product = store.match.product;
                 return (
                   <button
                     className={`store-card ${selectedStoreId === store.id ? "selected" : ""}`}
-                    key={store.id}
+                    key={`${store.id}-${inventory?.inventoryId}`}
                     onClick={() => handleSelectStore(store.id)}
                     type="button"
                   >
@@ -273,7 +398,10 @@ function ConsumerHomePage() {
                   </div>
                 </div>
                 <span className="selected-store-address">{selectedStore.address}</span>
-                <Link className="primary-button small" to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct.id}`}>
+                <Link
+                  className="primary-button small"
+                  to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct.id}&inventoryId=${selectedInventory.inventoryId}`}
+                >
                   이 매장에서 예약하기
                 </Link>
               </article>

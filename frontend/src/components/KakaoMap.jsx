@@ -37,23 +37,15 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation, focusT
   const overlays = useRef([]);
   const userMarker = useRef(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [kakaoMaps, setKakaoMaps] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
 
     loadKakaoMapSdk()
       .then((kakao) => {
-        if (cancelled || !mapElement.current || stores.length === 0) return;
-
-        const centerStore = stores.find((store) => store.id === selectedStoreId) ?? stores[0];
-        const center = userLocation
-          ? new kakao.maps.LatLng(userLocation.latitude, userLocation.longitude)
-          : new kakao.maps.LatLng(centerStore.latitude, centerStore.longitude);
-
-        mapInstance.current = new kakao.maps.Map(mapElement.current, {
-          center,
-          level: 5,
-        });
+        if (cancelled) return;
+        setKakaoMaps(kakao);
       })
       .catch((error) => {
         console.error(error);
@@ -73,9 +65,24 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation, focusT
   }, []);
 
   useEffect(() => {
-    if (!mapInstance.current || !window.kakao?.maps) return;
+    if (!kakaoMaps || !mapElement.current || mapInstance.current) return;
+    if (stores.length === 0 && !userLocation) return;
 
-    const kakao = window.kakao;
+    const centerStore = stores.find((store) => store.id === selectedStoreId) ?? stores[0];
+    const center = userLocation
+      ? new kakaoMaps.maps.LatLng(userLocation.latitude, userLocation.longitude)
+      : new kakaoMaps.maps.LatLng(centerStore.latitude, centerStore.longitude);
+
+    mapInstance.current = new kakaoMaps.maps.Map(mapElement.current, {
+      center,
+      level: 5,
+    });
+  }, [kakaoMaps, selectedStoreId, stores, userLocation]);
+
+  useEffect(() => {
+    if (!mapInstance.current || !kakaoMaps?.maps) return;
+
+    const kakao = kakaoMaps;
     markers.current.forEach((marker) => marker.setMap(null));
     overlays.current.forEach((overlay) => overlay.setMap(null));
     userMarker.current?.setMap(null);
@@ -89,7 +96,7 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation, focusT
       const userPosition = new kakao.maps.LatLng(userLocation.latitude, userLocation.longitude);
       const markerElement = document.createElement("div");
       markerElement.className = "kakao-user-location-marker";
-      markerElement.innerHTML = "내 위치";
+      markerElement.innerHTML = "기준 위치";
 
       userMarker.current = new kakao.maps.CustomOverlay({
         position: userPosition,
@@ -140,22 +147,22 @@ function KakaoMap({ stores, selectedStoreId, onSelectStore, userLocation, focusT
       overlays.current = [];
       userMarker.current = null;
     };
-  }, [stores, onSelectStore, selectedStoreId, userLocation]);
+  }, [kakaoMaps, stores, onSelectStore, selectedStoreId, userLocation]);
 
   useEffect(() => {
-    if (!mapInstance.current || !window.kakao?.maps) return;
+    if (!mapInstance.current || !kakaoMaps?.maps) return;
     if (focusTarget?.type === "user" && userLocation) {
       mapInstance.current.setLevel(5);
-      mapInstance.current.panTo(new window.kakao.maps.LatLng(userLocation.latitude, userLocation.longitude));
+      mapInstance.current.panTo(new kakaoMaps.maps.LatLng(userLocation.latitude, userLocation.longitude));
       return;
     }
 
     if (focusTarget?.type === "store") {
       const selectedStore = stores.find((store) => store.id === selectedStoreId);
       if (!selectedStore) return;
-      mapInstance.current.panTo(new window.kakao.maps.LatLng(selectedStore.latitude, selectedStore.longitude));
+      mapInstance.current.panTo(new kakaoMaps.maps.LatLng(selectedStore.latitude, selectedStore.longitude));
     }
-  }, [focusTarget, selectedStoreId, stores, userLocation]);
+  }, [focusTarget, kakaoMaps, selectedStoreId, stores, userLocation]);
 
   if (errorMessage) {
     return <FallbackMap stores={stores} selectedStoreId={selectedStoreId} onSelectStore={onSelectStore} userLocation={userLocation} errorMessage={errorMessage} />;
