@@ -552,6 +552,243 @@ app.get("/api/stores/:storeId", async (req, res) => {
   }));
 });
 
+app.get("/api/seller/stores", async (req, res) => {
+  const sellerId = Number(req.query.sellerId ?? req.query.seller_id);
+
+  if (!sellerId) {
+    return res.status(400).json({ message: "sellerId is required.", code: "SELLER_ID_REQUIRED" });
+  }
+
+  const [rows] = await pool.query(
+    `SELECT store_id, seller_id, name, address, latitude, longitude, phone, opening_hours, approval_status
+       FROM stores
+      WHERE seller_id = ?
+      ORDER BY store_id`,
+    [sellerId]
+  );
+
+  res.json(ok(rows.map((row) => ({
+    ...row,
+    latitude: Number(row.latitude),
+    longitude: Number(row.longitude),
+  }))));
+});
+
+app.get("/api/seller/stores/:storeId/inventories", async (req, res) => {
+  const sellerId = Number(req.query.sellerId ?? req.query.seller_id);
+  const storeId = Number(req.params.storeId);
+
+  if (!sellerId) {
+    return res.status(400).json({ message: "sellerId is required.", code: "SELLER_ID_REQUIRED" });
+  }
+
+  const [rows] = await pool.query(
+    `SELECT i.inventory_id, i.store_id, i.product_id, p.name AS product_name,
+            c.name AS category_name, p.price, p.image_url,
+            i.total_stock, i.reservable_stock, i.reserved_stock
+       FROM inventories i
+       JOIN stores s ON s.store_id = i.store_id
+       JOIN products p ON p.product_id = i.product_id
+       LEFT JOIN product_categories c ON c.category_id = p.category_id
+      WHERE i.store_id = ?
+        AND s.seller_id = ?
+      ORDER BY i.inventory_id`,
+    [storeId, sellerId]
+  );
+
+  res.json(ok(rows));
+});
+
+app.patch("/api/seller/inventories/:inventoryId", async (req, res) => {
+  const sellerId = Number(req.body.seller_id ?? req.body.sellerId);
+  const inventoryId = Number(req.params.inventoryId);
+  const totalStock = Number(req.body.total_stock ?? req.body.totalStock);
+  const reservableStock = Number(req.body.reservable_stock ?? req.body.reservableStock);
+
+  if (!sellerId || !Number.isInteger(totalStock) || !Number.isInteger(reservableStock) || totalStock < 0 || reservableStock < 0) {
+    return res.status(400).json({ message: "seller_id, total_stock, reservable_stock are required.", code: "INVALID_INVENTORY_REQUEST" });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query(
+      `SELECT i.inventory_id, i.store_id, i.reserved_stock, s.seller_id
+         FROM inventories i
+         JOIN stores s ON s.store_id = i.store_id
+        WHERE i.inventory_id = ?
+        FOR UPDATE`,
+      [inventoryId]
+    );
+
+    if (rows.length === 0 || rows[0].seller_id !== sellerId) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Inventory not found.", code: "INVENTORY_NOT_FOUND" });
+    }
+
+    const reservedStock = rows[0].reserved_stock;
+    const maxReservable = Math.max(totalStock - reservedStock, 0);
+
+    if (reservableStock > maxReservable) {
+      await connection.rollback();
+      return res.status(400).json({
+        message: `예약 가능 재고는 최대 ${maxReservable}개까지 설정할 수 있습니다.`,
+        code: "INVALID_RESERVABLE_STOCK",
+      });
+    }
+
+    await connection.query(
+      `UPDATE inventories
+          SET total_stock = ?,
+              reservable_stock = ?
+        WHERE inventory_id = ?`,
+      [totalStock, reservableStock, inventoryId]
+    );
+
+    await connection.commit();
+    res.json(ok({
+      inventory_id: inventoryId,
+      total_stock: totalStock,
+      reservable_stock: reservableStock,
+      reserved_stock: reservedStock,
+    }));
+  } catch (error) {
+    await connection.rollback();
+    console.error(error);
+    res.status(500).json({ message: "Failed to update inventory.", code: "INVENTORY_UPDATE_FAILED" });
+  } finally {
+    connection.release();
+  }
+});
+
+app.get("/api/seller/stores/:storeId/reservations", async (req, res) => {
+  const sellerId = Number(req.query.sellerId ?? req.query.seller_id);
+  const storeId = Number(req.params.storeId);
+
+  if (!sellerId) {
+    return res.status(400).json({ message: "sellerId is required.", code: "SELLER_ID_REQUIRED" });
+  }
+
+  const [rows] = await pool.query(
+    `SELECT r.reservation_id, r.user_id, u.name AS customer_name, r.inventory_id,
+            r.quantity, r.status, r.visit_time, r.request_note, r.created_at,
+            p.name AS product_name, s.name AS store_name
+       FROM reservations r
+       JOIN inventories i ON i.inventory_id = r.inventory_id
+       JOIN stores s ON s.store_id = i.store_id
+       JOIN products p ON p.product_id = i.product_id
+       JOIN users u ON u.user_id = r.user_id
+      WHERE s.store_id = ?
+        AND s.seller_id = ?
+      ORDER BY r.created_at DESC`,
+    [storeId, sellerId]
+  );
+
+  res.json(ok(rows));
+});
+
+app.patch("/api/seller/reservations/:reservationId/status", async (req, res) => {
+  const sellerId = Number(req.body.seller_id ?? req.body.sellerId);
+  const reservationId = Number(req.params.reservationId);
+  const nextStatus = String(req.body.status ?? "").toUpperCase();
+  const allowedStatuses = ["APPROVED", "CANCELED", "PICKED_UP"];
+
+  if (!sellerId || !allowedStatuses.includes(nextStatus)) {
+    return res.status(400).json({ message: "seller_id and valid status are required.", code: "INVALID_STATUS_REQUEST" });
+  }
+
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [rows] = await connection.query(
+      `SELECT r.reservation_id, r.inventory_id, r.quantity, r.status, s.seller_id
+         FROM reservations r
+         JOIN inventories i ON i.inventory_id = r.inventory_id
+         JOIN stores s ON s.store_id = i.store_id
+        WHERE r.reservation_id = ?
+        FOR UPDATE`,
+      [reservationId]
+    );
+
+    if (rows.length === 0 || rows[0].seller_id !== sellerId) {
+      await connection.rollback();
+      return res.status(404).json({ message: "Reservation not found.", code: "RESERVATION_NOT_FOUND" });
+    }
+
+    const reservation = rows[0];
+    const validTransition = (nextStatus === "APPROVED" && reservation.status === "PENDING")
+      || (nextStatus === "CANCELED" && ["PENDING", "APPROVED"].includes(reservation.status))
+      || (nextStatus === "PICKED_UP" && reservation.status === "APPROVED");
+
+    if (!validTransition) {
+      await connection.rollback();
+      return res.status(409).json({ message: "허용되지 않는 예약 상태 변경입니다.", code: "INVALID_RESERVATION_TRANSITION" });
+    }
+
+    if (nextStatus === "CANCELED") {
+      const [inventoryUpdateResult] = await connection.query(
+        `UPDATE inventories
+            SET reservable_stock = reservable_stock + ?,
+                reserved_stock = reserved_stock - ?
+          WHERE inventory_id = ?
+            AND reserved_stock >= ?`,
+        [reservation.quantity, reservation.quantity, reservation.inventory_id, reservation.quantity]
+      );
+
+      if (inventoryUpdateResult.affectedRows !== 1) {
+        await connection.rollback();
+        return res.status(409).json({ message: "예약 재고 복구에 실패했습니다.", code: "INVENTORY_RESTORE_FAILED" });
+      }
+    }
+
+    if (nextStatus === "PICKED_UP") {
+      const [inventoryUpdateResult] = await connection.query(
+        `UPDATE inventories
+            SET reserved_stock = reserved_stock - ?,
+                total_stock = total_stock - ?
+          WHERE inventory_id = ?
+            AND reserved_stock >= ?
+            AND total_stock >= ?`,
+        [reservation.quantity, reservation.quantity, reservation.inventory_id, reservation.quantity, reservation.quantity]
+      );
+
+      if (inventoryUpdateResult.affectedRows !== 1) {
+        await connection.rollback();
+        return res.status(409).json({ message: "수령 완료 재고 반영에 실패했습니다.", code: "INVENTORY_PICKUP_FAILED" });
+      }
+    }
+
+    await connection.query(
+      `UPDATE reservations
+          SET status = ?,
+              canceled_at = CASE WHEN ? = 'CANCELED' THEN CURRENT_TIMESTAMP ELSE canceled_at END,
+              picked_up_at = CASE WHEN ? = 'PICKED_UP' THEN CURRENT_TIMESTAMP ELSE picked_up_at END
+        WHERE reservation_id = ?`,
+      [nextStatus, nextStatus, nextStatus, reservationId]
+    );
+
+    await connection.query(
+      `INSERT INTO reservation_status_logs
+       (reservation_id, previous_status, new_status, changed_by_user_id, changed_by_role, reason)
+       VALUES (?, ?, ?, ?, 'SELLER', '판매자 예약 상태 변경')`,
+      [reservationId, reservation.status, nextStatus, sellerId]
+    );
+
+    await connection.commit();
+    res.json(ok({ reservation_id: reservationId, status: nextStatus }));
+  } catch (error) {
+    await connection.rollback();
+    console.error(error);
+    res.status(500).json({ message: "Failed to update reservation status.", code: "RESERVATION_STATUS_UPDATE_FAILED" });
+  } finally {
+    connection.release();
+  }
+});
+
 app.post("/api/reservations", async (req, res) => {
   const userId = Number(req.body.user_id ?? req.body.userId);
   const inventoryId = Number(req.body.inventory_id ?? req.body.inventoryId);

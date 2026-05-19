@@ -324,7 +324,68 @@ Response:
 }
 ```
 
-## 6. Reservation API
+## 6. Seller API
+
+초기 구현에서는 로그인/JWT가 완성되기 전이므로 `sellerId` 또는 `seller_id`를 임시로 전달한다. 모든 판매자 API는 요청한 판매자가 소유한 매장/재고/예약만 조회하거나 수정해야 한다.
+
+### GET /seller/stores?sellerId=2
+
+판매자가 소유한 매장 목록을 조회한다.
+
+### GET /seller/stores/:storeId/inventories?sellerId=2
+
+판매자 매장의 상품별 재고를 조회한다.
+
+### PATCH /seller/inventories/:inventoryId
+
+판매자가 상품 재고를 수정한다. `reserved_stock`을 고려하여 `reservable_stock <= total_stock - reserved_stock` 조건을 만족해야 한다.
+
+Request:
+
+```json
+{
+  "seller_id": 2,
+  "total_stock": 100,
+  "reservable_stock": 70
+}
+```
+
+### GET /seller/stores/:storeId/reservations?sellerId=2
+
+판매자 매장의 예약 목록을 조회한다.
+
+### PATCH /seller/reservations/:reservationId/status
+
+판매자가 예약 상태를 변경한다.
+
+Request:
+
+```json
+{
+  "seller_id": 2,
+  "status": "APPROVED"
+}
+```
+
+허용 상태 전이:
+
+```text
+PENDING -> APPROVED
+PENDING -> CANCELED
+APPROVED -> CANCELED
+APPROVED -> PICKED_UP
+```
+
+재고 처리:
+
+```text
+- APPROVED: 예약 상태만 변경한다.
+- CANCELED: reservable_stock을 복구하고 reserved_stock을 감소시킨다.
+- PICKED_UP: reserved_stock과 total_stock을 감소시켜 실제 판매 완료를 반영한다.
+- 상태 변경과 재고 변경은 같은 트랜잭션에서 처리한다.
+```
+
+## 7. Reservation API
 
 ### POST /reservations
 

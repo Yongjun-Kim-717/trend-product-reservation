@@ -29,9 +29,7 @@ export function ConsumerHeader({ onRequestLocation, isLocating }) {
 export function SellerHeader() {
   return (
     <AppHeader role="판매자">
-      <select className="compact-select" defaultValue="성수 디저트랩">
-        <option>성수 디저트랩</option>
-      </select>
+      <NavLink className="text-link" to="/seller">가게 관리</NavLink>
     </AppHeader>
   );
 }

@@ -75,3 +75,29 @@ export function cancelReservation(reservationId, payload = {}) {
     body: JSON.stringify(payload),
   });
 }
+
+export function getSellerStores(sellerId) {
+  return request(`/seller/stores?sellerId=${sellerId}`);
+}
+
+export function getSellerInventories(storeId, sellerId) {
+  return request(`/seller/stores/${storeId}/inventories?sellerId=${sellerId}`);
+}
+
+export function updateSellerInventory(inventoryId, payload = {}) {
+  return request(`/seller/inventories/${inventoryId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getSellerReservations(storeId, sellerId) {
+  return request(`/seller/stores/${storeId}/reservations?sellerId=${sellerId}`);
+}
+
+export function updateSellerReservationStatus(reservationId, payload = {}) {
+  return request(`/seller/reservations/${reservationId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}

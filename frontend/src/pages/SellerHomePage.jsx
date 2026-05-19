@@ -1,8 +1,16 @@
-﻿import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, PackagePlus, X } from "lucide-react";
+import { AlertCircle, Check, PackagePlus, X } from "lucide-react";
 import { SellerHeader } from "../components/AppHeader.jsx";
-import { sellerProducts, sellerReservations } from "../data/mockData.js";
+import {
+  getSellerInventories,
+  getSellerReservations,
+  getSellerStores,
+  updateSellerInventory,
+  updateSellerReservationStatus,
+} from "../api/client.js";
+
+const DEMO_SELLER_ID = 2;
 
 const reservationStatus = {
   PENDING: { label: "승인 대기", className: "warning" },
@@ -11,10 +19,114 @@ const reservationStatus = {
   CANCELED: { label: "취소됨", className: "danger" },
 };
 
+function toInventoryModel(row) {
+  return {
+    id: row.inventory_id,
+    storeId: row.store_id,
+    productId: row.product_id,
+    name: row.product_name,
+    category: row.category_name ?? "기타",
+    price: row.price ?? 0,
+    imageUrl: row.image_url ?? "",
+    total: row.total_stock,
+    reservable: row.reservable_stock,
+    reserved: row.reserved_stock,
+    status: row.reservable_stock <= 3 ? "재고부족" : "판매중",
+  };
+}
+
+function toReservationModel(row) {
+  return {
+    id: row.reservation_id,
+    product: row.product_name,
+    customer: row.customer_name ?? `사용자 ${row.user_id}`,
+    quantity: row.quantity,
+    visitTime: row.visit_time ? String(row.visit_time).replace("T", " ").slice(0, 16) : "방문 시간 미정",
+    status: row.status,
+  };
+}
+
 function SellerHomePage() {
-  const [products, setProducts] = useState(sellerProducts);
-  const [reservations, setReservations] = useState(sellerReservations);
+  const [stores, setStores] = useState([]);
+  const [selectedStoreId, setSelectedStoreId] = useState(null);
+  const [products, setProducts] = useState([]);
+  const [reservations, setReservations] = useState([]);
   const [inventoryMessage, setInventoryMessage] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [updatingInventoryId, setUpdatingInventoryId] = useState(null);
+  const [updatingReservationId, setUpdatingReservationId] = useState(null);
+
+  const selectedStore = stores.find((store) => store.store_id === selectedStoreId) ?? stores[0];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadStores() {
+      setIsLoading(true);
+      setErrorMessage("");
+
+      try {
+        const rows = await getSellerStores(DEMO_SELLER_ID);
+        if (!cancelled) {
+          setStores(rows);
+          setSelectedStoreId(rows[0]?.store_id ?? null);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error.message);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadStores();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedStoreId) return;
+
+    let cancelled = false;
+
+    async function loadStoreData() {
+      setIsLoading(true);
+      setErrorMessage("");
+      setInventoryMessage("");
+
+      try {
+        const [inventoryRows, reservationRows] = await Promise.all([
+          getSellerInventories(selectedStoreId, DEMO_SELLER_ID),
+          getSellerReservations(selectedStoreId, DEMO_SELLER_ID),
+        ]);
+
+        if (!cancelled) {
+          setProducts(inventoryRows.map(toInventoryModel));
+          setReservations(reservationRows.map(toReservationModel));
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setErrorMessage(error.message);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoading(false);
+        }
+      }
+    }
+
+    loadStoreData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedStoreId]);
 
   const metrics = useMemo(() => {
     const pendingCount = reservations.filter((reservation) => reservation.status === "PENDING").length;
@@ -29,37 +141,74 @@ function SellerHomePage() {
     };
   }, [products, reservations]);
 
-  const updateReservableStock = (productId, value) => {
+  const updateReservableStock = async (productId, value) => {
+    const targetProduct = products.find((product) => product.id === productId);
+    if (!targetProduct || updatingInventoryId) return;
+
     const nextValue = Math.max(Number(value) || 0, 0);
+    const maxReservable = Math.max(targetProduct.total - targetProduct.reserved, 0);
+    const nextReservable = Math.min(nextValue, maxReservable);
 
-    setProducts((currentProducts) =>
-      currentProducts.map((product) => {
-        if (product.id !== productId) return product;
+    setUpdatingInventoryId(productId);
+    setErrorMessage("");
 
-        const maxReservable = Math.max(product.total - product.reserved, 0);
-        const nextReservable = Math.min(nextValue, maxReservable);
+    try {
+      const result = await updateSellerInventory(productId, {
+        seller_id: DEMO_SELLER_ID,
+        total_stock: targetProduct.total,
+        reservable_stock: nextReservable,
+      });
 
-        if (nextValue > maxReservable) {
-          setInventoryMessage(`${product.name}의 예약 가능 재고는 최대 ${maxReservable}개까지 설정할 수 있습니다.`);
-        } else {
-          setInventoryMessage(`${product.name} 예약 가능 재고를 ${nextReservable}개로 수정했습니다.`);
-        }
-
-        return {
-          ...product,
-          reservable: nextReservable,
-          status: nextReservable <= 3 ? "재고부족" : "판매중",
-        };
-      })
-    );
+      setProducts((currentProducts) =>
+        currentProducts.map((product) =>
+          product.id === productId
+            ? {
+              ...product,
+              reservable: result.reservable_stock,
+              reserved: result.reserved_stock,
+              status: result.reservable_stock <= 3 ? "재고부족" : "판매중",
+            }
+            : product
+        )
+      );
+      setInventoryMessage(`${targetProduct.name} 예약 가능 재고를 ${result.reservable_stock}개로 수정했습니다.`);
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setUpdatingInventoryId(null);
+    }
   };
 
-  const updateReservationStatus = (reservationId, status) => {
-    setReservations((currentReservations) =>
-      currentReservations.map((reservation) =>
-        reservation.id === reservationId ? { ...reservation, status } : reservation
-      )
-    );
+  const updateReservationStatus = async (reservationId, status) => {
+    if (updatingReservationId) return;
+
+    setUpdatingReservationId(reservationId);
+    setErrorMessage("");
+    setInventoryMessage("");
+
+    try {
+      const result = await updateSellerReservationStatus(reservationId, {
+        seller_id: DEMO_SELLER_ID,
+        status,
+      });
+
+      setReservations((currentReservations) =>
+        currentReservations.map((reservation) =>
+          reservation.id === reservationId ? { ...reservation, status: result.status } : reservation
+        )
+      );
+
+      if (selectedStoreId) {
+        const inventoryRows = await getSellerInventories(selectedStoreId, DEMO_SELLER_ID);
+        setProducts(inventoryRows.map(toInventoryModel));
+      }
+
+      setInventoryMessage(`예약 상태를 ${reservationStatus[result.status]?.label ?? result.status}(으)로 변경했습니다.`);
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setUpdatingReservationId(null);
+    }
   };
 
   return (
@@ -68,18 +217,31 @@ function SellerHomePage() {
       <div className="management-layout">
         <aside className="side-nav">
           <strong>가게 관리</strong>
-          <a>가게 정보</a>
-          <a>등록된 상품</a>
-          <a>재고 관리</a>
-          <a>예약 관리</a>
+          {stores.map((store) => (
+            <button
+              className={selectedStore?.store_id === store.store_id ? "active-nav" : ""}
+              key={store.store_id}
+              onClick={() => setSelectedStoreId(store.store_id)}
+              type="button"
+            >
+              {store.name}
+            </button>
+          ))}
         </aside>
 
         <main className="management-main">
+          {isLoading && <div className="warning-message">판매자 데이터를 불러오는 중입니다.</div>}
+          {errorMessage && <div className="error-message"><AlertCircle size={18} /> {errorMessage}</div>}
+
           <section className="store-overview">
             <div>
               <p className="eyebrow">판매자</p>
-              <h1>성수 디저트랩</h1>
-              <p>서울 성동구 성수이로 10 · 영업시간 10:00 - 21:00</p>
+              <h1>{selectedStore?.name ?? "등록된 가게 없음"}</h1>
+              <p>
+                {selectedStore
+                  ? `${selectedStore.address} · 영업시간 ${selectedStore.opening_hours ?? "미등록"} · ${selectedStore.approval_status}`
+                  : "가게를 등록하면 상품과 예약을 관리할 수 있습니다."}
+              </p>
             </div>
             <Link className="primary-button" to="/seller/products/new"><PackagePlus size={18} /> 상품 등록</Link>
           </section>
@@ -87,7 +249,7 @@ function SellerHomePage() {
           <section className="metric-grid">
             <article><span>등록 상품</span><strong>{metrics.productCount}</strong></article>
             <article><span>예약 가능 재고</span><strong>{metrics.reservableStock}</strong></article>
-            <article><span>오늘 예약</span><strong>{metrics.todayReservations}</strong></article>
+            <article><span>예약 건수</span><strong>{metrics.todayReservations}</strong></article>
             <article><span>수령 대기</span><strong>{metrics.waitingPickup}</strong></article>
           </section>
 
@@ -111,11 +273,15 @@ function SellerHomePage() {
                       <td>
                         <input
                           className="table-input"
-                          type="number"
-                          min="0"
+                          disabled={updatingInventoryId === product.id}
                           max={maxReservable}
-                          value={product.reservable}
-                          onChange={(event) => updateReservableStock(product.id, event.target.value)}
+                          min="0"
+                          onBlur={(event) => updateReservableStock(product.id, event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") updateReservableStock(product.id, event.currentTarget.value);
+                          }}
+                          type="number"
+                          defaultValue={product.reservable}
                         />
                       </td>
                       <td>{product.reserved}</td>
@@ -139,6 +305,7 @@ function SellerHomePage() {
                 const canApprove = reservation.status === "PENDING";
                 const canPickup = reservation.status === "APPROVED";
                 const canCancel = reservation.status === "PENDING" || reservation.status === "APPROVED";
+                const isUpdating = updatingReservationId === reservation.id;
 
                 return (
                   <article className="reservation-card-row" key={reservation.id}>
@@ -148,13 +315,13 @@ function SellerHomePage() {
                     </div>
                     <span className={`status-chip ${status.className}`}>{status.label}</span>
                     <div className="seller-action-row">
-                      <button className="ghost-button" disabled={!canApprove} onClick={() => updateReservationStatus(reservation.id, "APPROVED")} type="button">
+                      <button className="ghost-button" disabled={!canApprove || isUpdating} onClick={() => updateReservationStatus(reservation.id, "APPROVED")} type="button">
                         예약 승인
                       </button>
-                      <button className="ghost-button" disabled={!canPickup} onClick={() => updateReservationStatus(reservation.id, "PICKED_UP")} type="button">
+                      <button className="ghost-button" disabled={!canPickup || isUpdating} onClick={() => updateReservationStatus(reservation.id, "PICKED_UP")} type="button">
                         <Check size={16} /> 수령 완료
                       </button>
-                      <button className="danger-button" disabled={!canCancel} onClick={() => updateReservationStatus(reservation.id, "CANCELED")} type="button">
+                      <button className="danger-button" disabled={!canCancel || isUpdating} onClick={() => updateReservationStatus(reservation.id, "CANCELED")} type="button">
                         <X size={16} /> 예약 취소
                       </button>
                     </div>
