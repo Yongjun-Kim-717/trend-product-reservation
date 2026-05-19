@@ -676,7 +676,7 @@ app.patch("/api/reservations/:reservationId/cancel", async (req, res) => {
       return res.status(409).json({ message: "취소할 수 없는 예약 상태입니다.", code: "INVALID_RESERVATION_STATUS" });
     }
 
-    await connection.query(
+    const [inventoryUpdateResult] = await connection.query(
       `UPDATE inventories
           SET reservable_stock = reservable_stock + ?,
               reserved_stock = reserved_stock - ?
@@ -684,6 +684,11 @@ app.patch("/api/reservations/:reservationId/cancel", async (req, res) => {
           AND reserved_stock >= ?`,
       [reservation.quantity, reservation.quantity, reservation.inventory_id, reservation.quantity]
     );
+
+    if (inventoryUpdateResult.affectedRows !== 1) {
+      await connection.rollback();
+      return res.status(409).json({ message: "예약 재고 복구에 실패했습니다.", code: "INVENTORY_RESTORE_FAILED" });
+    }
 
     await connection.query(
       `UPDATE reservations

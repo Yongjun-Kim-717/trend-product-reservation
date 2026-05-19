@@ -68,3 +68,10 @@ export function createReservation(payload) {
 export function getUserReservations(userId) {
   return request(`/users/${userId}/reservations`);
 }
+
+export function cancelReservation(reservationId, payload = {}) {
+  return request(`/reservations/${reservationId}/cancel`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}

@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, CalendarClock } from "lucide-react";
+import { AlertCircle, CalendarClock, RotateCcw } from "lucide-react";
 import { Link } from "react-router-dom";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
-import { getUserReservations } from "../api/client.js";
+import { cancelReservation, getUserReservations } from "../api/client.js";
 
 const DEMO_USER_ID = 2;
 
@@ -11,10 +11,19 @@ function formatDateTime(value) {
   return String(value).replace("T", " ").slice(0, 16);
 }
 
+const statusView = {
+  PENDING: { label: "예약 대기", className: "info" },
+  APPROVED: { label: "예약 승인", className: "success" },
+  CANCELED: { label: "예약 취소", className: "danger" },
+  PICKED_UP: { label: "수령 완료", className: "success" },
+};
+
 function MyReservationsPage() {
   const [reservations, setReservations] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
+  const [actionMessage, setActionMessage] = useState("");
+  const [cancelingId, setCancelingId] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -41,6 +50,31 @@ function MyReservationsPage() {
     };
   }, []);
 
+  const handleCancelReservation = async (reservation) => {
+    const canCancel = ["PENDING", "APPROVED"].includes(reservation.status);
+    if (!canCancel || cancelingId) return;
+
+    setErrorMessage("");
+    setActionMessage("");
+    setCancelingId(reservation.reservation_id);
+
+    try {
+      const result = await cancelReservation(reservation.reservation_id, { user_id: DEMO_USER_ID });
+      setReservations((currentRows) =>
+        currentRows.map((item) =>
+          item.reservation_id === reservation.reservation_id
+            ? { ...item, status: result.status, canceled_at: new Date().toISOString() }
+            : item
+        )
+      );
+      setActionMessage(`${reservation.product_name} 예약이 취소되었습니다.`);
+    } catch (error) {
+      setErrorMessage(error.message);
+    } finally {
+      setCancelingId(null);
+    }
+  };
+
   return (
     <div className="page-shell">
       <ConsumerHeader />
@@ -55,6 +89,7 @@ function MyReservationsPage() {
 
         {isLoading && <div className="warning-message">DB에서 예약 내역을 불러오는 중입니다.</div>}
         {errorMessage && <div className="error-message"><AlertCircle size={18} /> {errorMessage}</div>}
+        {actionMessage && <div className="success-message">{actionMessage}</div>}
 
         {!isLoading && !errorMessage && reservations.length === 0 && (
           <section className="table-section empty-admin-section">
@@ -63,19 +98,36 @@ function MyReservationsPage() {
         )}
 
         <section className="reservation-list">
-          {reservations.map((reservation) => (
-            <article className="reservation-card-row" key={reservation.reservation_id}>
-              <div className="reservation-main-info">
-                <strong>{reservation.product_name}</strong>
-                <span>{reservation.store_name}</span>
-                <span><CalendarClock size={14} /> {formatDateTime(reservation.visit_time)}</span>
-              </div>
-              <span className="status-chip info">{reservation.status}</span>
-              <div className="seller-action-row">
-                <span className="stock-pill">{reservation.quantity}개</span>
-              </div>
-            </article>
-          ))}
+          {reservations.map((reservation) => {
+            const status = statusView[reservation.status] ?? { label: reservation.status, className: "info" };
+            const canCancel = ["PENDING", "APPROVED"].includes(reservation.status);
+
+            return (
+              <article className="reservation-card-row" key={reservation.reservation_id}>
+                <div className="reservation-main-info">
+                  <strong>{reservation.product_name}</strong>
+                  <span>{reservation.store_name}</span>
+                  <span><CalendarClock size={14} /> {formatDateTime(reservation.visit_time)}</span>
+                </div>
+                <span className={`status-chip ${status.className}`}>{status.label}</span>
+                <div className="seller-action-row">
+                  <span className="stock-pill">{reservation.quantity}개</span>
+                  {canCancel ? (
+                    <button
+                      className="danger-button"
+                      disabled={cancelingId === reservation.reservation_id}
+                      onClick={() => handleCancelReservation(reservation)}
+                      type="button"
+                    >
+                      <RotateCcw size={16} /> {cancelingId === reservation.reservation_id ? "취소 중" : "예약 취소"}
+                    </button>
+                  ) : (
+                    <span className="helper-text compact">처리 완료</span>
+                  )}
+                </div>
+              </article>
+            );
+          })}
         </section>
       </main>
     </div>

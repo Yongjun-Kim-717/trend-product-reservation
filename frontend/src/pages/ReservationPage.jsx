@@ -237,7 +237,7 @@ function ReservationPage() {
               </dl>
               <div className="result-actions">
                 <Link className="ghost-button" to="/consumer">계속 둘러보기</Link>
-                <button className="ghost-button" type="button">내 예약 보기</button>
+                <Link className="ghost-button" to="/consumer/reservations">내 예약 보기</Link>
               </div>
             </div>
           )}
