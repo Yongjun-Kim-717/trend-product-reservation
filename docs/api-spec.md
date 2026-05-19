@@ -220,9 +220,18 @@ Response:
 }
 ```
 
-### GET /products/trending
+### GET /keywords/trending
 
-유행 점수 또는 검색 로그 기준으로 유행 상품을 조회한다.
+최근 인기 검색어를 Keyword 기준으로 조회한다. 이 API는 특정 매장의 실제 판매 상품이 아니라, 사용자가 검색한 유행 대상의 기준 키워드 랭킹을 반환한다.
+
+랭킹 산정 정책:
+
+```text
+1. 최근 7일 search_logs 중 keyword_id가 있는 MAPPED 검색을 집계한다.
+2. keyword_id별 검색 수를 COUNT한다.
+3. 검색 수 DESC, 최근 검색 시각 DESC 순으로 정렬한다.
+4. 최근 검색 로그가 없으면 keywords.trend_score 기준 관리자 추천 순위로 fallback한다.
+```
 
 Response:
 
@@ -230,15 +239,23 @@ Response:
 {
   "data": [
     {
-      "product_id": 1,
-      "name": "버터떡",
+      "rank": 1,
+      "keyword_id": 1,
       "keyword_name": "버터떡",
-      "trend_score": 95,
-      "image_url": "/uploads/products/butter-rice-cake.jpg"
+      "search_count": 12,
+      "rank_basis": "SEARCH_LOG_7D"
     }
   ]
 }
 ```
+
+호환 API:
+
+```text
+GET /products/trending
+```
+
+기존 프론트 호환을 위해 같은 응답을 반환한다. 단, 의미상 신규 구현에서는 `/keywords/trending` 사용을 권장한다.
 
 ## 5. Store API
 

@@ -293,6 +293,48 @@ async function logSearch({ userId, rawQuery, keyword, location, resultCount, map
   }
 }
 
+async function getTrendingKeywords() {
+  const [searchRows] = await pool.query(
+    `SELECT k.keyword_id, k.keyword_name, COUNT(*) AS search_count, MAX(sl.created_at) AS last_searched_at
+       FROM search_logs sl
+       JOIN keywords k ON k.keyword_id = sl.keyword_id
+      WHERE sl.keyword_id IS NOT NULL
+        AND sl.mapping_status = 'MAPPED'
+        AND k.status = 'ACTIVE'
+        AND sl.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+      GROUP BY k.keyword_id, k.keyword_name
+      HAVING COUNT(*) >= 1
+      ORDER BY search_count DESC, last_searched_at DESC
+      LIMIT 10`
+  );
+
+  if (searchRows.length > 0) {
+    return searchRows.map((row, index) => ({
+      rank: index + 1,
+      keyword_id: row.keyword_id,
+      keyword_name: row.keyword_name,
+      search_count: Number(row.search_count),
+      rank_basis: "SEARCH_LOG_7D",
+    }));
+  }
+
+  const [fallbackRows] = await pool.query(
+    `SELECT keyword_id, keyword_name, trend_score
+       FROM keywords
+      WHERE status = 'ACTIVE'
+      ORDER BY trend_score DESC, keyword_id ASC
+      LIMIT 10`
+  );
+
+  return fallbackRows.map((row, index) => ({
+    rank: index + 1,
+    keyword_id: row.keyword_id,
+    keyword_name: row.keyword_name,
+    search_count: 0,
+    rank_basis: "ADMIN_TREND_SCORE",
+  }));
+}
+
 app.get("/api/health", async (_req, res) => {
   try {
     const [rows] = await pool.query("SELECT 1 AS ok");
@@ -315,15 +357,13 @@ app.get("/api/products", async (_req, res) => {
 });
 
 app.get("/api/products/trending", async (_req, res) => {
-  const [rows] = await pool.query(
-    `SELECT p.product_id, p.name, k.keyword_name, k.trend_score, p.image_url
-       FROM keywords k
-       JOIN products p ON p.name = k.keyword_name
-      WHERE k.status = 'ACTIVE' AND p.status = 'ACTIVE'
-      ORDER BY k.trend_score DESC, p.product_id ASC
-      LIMIT 10`
-  );
-  res.json(ok(rows));
+  const keywords = await getTrendingKeywords();
+  res.json(ok(keywords));
+});
+
+app.get("/api/keywords/trending", async (_req, res) => {
+  const keywords = await getTrendingKeywords();
+  res.json(ok(keywords));
 });
 
 app.get("/api/search", async (req, res) => {

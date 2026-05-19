@@ -476,7 +476,7 @@ location_cache(query_normalized) UNIQUE
 ```text
 GET /api/health
 GET /api/products
-GET /api/products/trending
+GET /api/keywords/trending
 GET /api/search?query=...&lat=...&lng=...
 GET /api/stores/nearby
 GET /api/stores/:storeId
@@ -506,6 +506,8 @@ PATCH /api/admin/unmapped-searches/:id/resolve
 GET /api/admin/search-logs
 GET /api/admin/search-summary
 ```
+
+`GET /api/keywords/trending`은 특정 매장의 상품이 아니라 최근 검색 로그 기반 인기 Keyword를 반환한다. 기존 `GET /api/products/trending`은 호환용으로 유지할 수 있으나, 신규 화면에서는 Keyword 기준 랭킹을 사용한다.
 
 ## 13. 배포 및 발표 환경 요구사항
 
@@ -652,4 +654,3 @@ DB 담당자 진행 항목:
 10. 프론트 mock 데이터 제거 후 실제 API 연결
 11. EC2/RDS 발표 환경 점검
 ```
-

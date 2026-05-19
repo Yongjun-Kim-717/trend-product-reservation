@@ -27,6 +27,10 @@ export function getTrendingProducts() {
   return request("/products/trending");
 }
 
+export function getTrendingKeywords() {
+  return request("/keywords/trending");
+}
+
 export function searchStores(query, { lat, lng, radiusKm = 5 } = {}) {
   const params = new URLSearchParams();
   params.set("query", query);

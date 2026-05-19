@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { AlertCircle, LocateFixed, Navigation, Search, X } from "lucide-react";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import KakaoMap from "../components/KakaoMap.jsx";
-import { getNearbyStores, getProducts, searchStores } from "../api/client.js";
+import { getNearbyStores, getTrendingKeywords, searchStores } from "../api/client.js";
 
 const DEFAULT_LOCATION = {
   label: "부평역",
@@ -40,14 +40,13 @@ function formatDistance(distanceKm, fallbackDistance) {
   return `${distanceKm.toFixed(1)}km`;
 }
 
-function toProductModel(product) {
+function toTrendingKeywordModel(keyword) {
   return {
-    id: product.product_id,
-    name: product.name,
-    category: product.category ?? "기타",
-    description: product.description ?? "",
-    imageUrl: product.image_url ?? "",
-    trendBadge: "DB",
+    id: keyword.keyword_id,
+    name: keyword.keyword_name,
+    searchCount: keyword.search_count ?? 0,
+    rankBasis: keyword.rank_basis,
+    trendBadge: keyword.rank_basis === "SEARCH_LOG_7D" ? `검색 ${keyword.search_count}회` : "추천",
   };
 }
 
@@ -92,6 +91,7 @@ function ConsumerHomePage() {
   const [products, setProducts] = useState([]);
   const [nearbyStores, setNearbyStores] = useState([]);
   const [selectedProductId, setSelectedProductId] = useState(null);
+  const [activeKeywordName, setActiveKeywordName] = useState(null);
   const [selectedStoreId, setSelectedStoreId] = useState(null);
   const [userLocation, setUserLocation] = useState(null);
   const [isLocating, setIsLocating] = useState(false);
@@ -102,7 +102,7 @@ function ConsumerHomePage() {
   const [searchContext, setSearchContext] = useState({
     locationLabel: DEFAULT_LOCATION.label,
     productLabel: "전체 상품",
-    source: "기본 위치 + DB",
+    source: "기본 위치",
   });
 
   const filteredProducts = useMemo(() => {
@@ -110,9 +110,10 @@ function ConsumerHomePage() {
     if (!normalizedQuery) return products;
     return products.filter((product) => normalizedQuery.includes(product.name.toLowerCase()) || product.name.toLowerCase().includes(normalizedQuery));
   }, [products, query]);
+  const displayedKeywords = query.trim() ? filteredProducts : products;
 
   const activeProductId = selectedProductId;
-  const activeProduct = products.find((product) => product.id === activeProductId);
+  const activeProduct = activeProductId ? { name: searchContext.productLabel } : null;
 
   const matchedStores = useMemo(() => {
     const baseStores = activeProductId
@@ -167,10 +168,10 @@ function ConsumerHomePage() {
       productLabel,
       source: sourceLabel,
     });
-    setLocationMessage(`${result.location?.query ?? DEFAULT_LOCATION.label} 기준으로 실제 DB 매장 ${nextStores.length}곳을 조회했습니다.`);
+    setLocationMessage(`${result.location?.query ?? DEFAULT_LOCATION.label} 기준으로 등록 매장 ${nextStores.length}곳을 조회했습니다.`);
   }, []);
 
-  const loadNearbyStores = useCallback(async ({ location = DEFAULT_LOCATION, productId = null, sourceLabel = "기본 위치 + DB" } = {}) => {
+  const loadNearbyStores = useCallback(async ({ location = DEFAULT_LOCATION, productId = null, sourceLabel = "기본 위치" } = {}) => {
     setIsSearching(true);
     setSearchError("");
 
@@ -203,6 +204,7 @@ function ConsumerHomePage() {
 
   const runSearch = useCallback(async (nextQuery) => {
     const searchQuery = nextQuery.trim();
+    setActiveKeywordName(searchQuery || null);
     if (!searchQuery) {
       await loadNearbyStores();
       return;
@@ -220,7 +222,7 @@ function ConsumerHomePage() {
       });
       const activeProduct = result.stores[0]?.inventory?.product_id ?? null;
       const productLabel = result.keyword?.keyword_name ?? result.product?.name ?? "전체 상품";
-      applyStoreResult(result, result.location ? "검색어 위치 + DB" : "기본 위치 + 상품 검색", productLabel, activeProduct);
+      applyStoreResult(result, result.location ? "검색어 위치" : "기본 위치 + 상품 검색", productLabel, activeProduct);
     } catch (error) {
       setNearbyStores([]);
       setSelectedStoreId(null);
@@ -232,8 +234,8 @@ function ConsumerHomePage() {
   }, [applyStoreResult, loadNearbyStores, userLocation]);
 
   useEffect(() => {
-    getProducts()
-      .then((rows) => setProducts(rows.map(toProductModel)))
+    getTrendingKeywords()
+      .then((rows) => setProducts(rows.map(toTrendingKeywordModel)))
       .catch((error) => setSearchError(error.message));
   }, []);
 
@@ -242,13 +244,15 @@ function ConsumerHomePage() {
   }, [loadNearbyStores]);
 
   const handleSelectProduct = (product) => {
-    setSelectedProductId(product.id);
+    setSelectedProductId(null);
+    setActiveKeywordName(product.name);
     setQuery(product.name);
     runSearch(product.name);
   };
 
   const clearProductFilter = () => {
     setSelectedProductId(null);
+    setActiveKeywordName(null);
     setQuery("");
     loadNearbyStores();
   };
@@ -277,7 +281,7 @@ function ConsumerHomePage() {
         setLocationMessage(`현재 위치 기준으로 주변 매장을 거리순 정렬했습니다. (${nextLocation.latitude.toFixed(4)}, ${nextLocation.longitude.toFixed(4)})`);
         setSearchContext((current) => ({ ...current, locationLabel: "현재 위치", source: "내 위치" }));
         setMapFocusTarget({ type: "user", id: Date.now() });
-        loadNearbyStores({ location: { ...nextLocation, label: "현재 위치" }, sourceLabel: "내 위치 + DB" });
+        loadNearbyStores({ location: { ...nextLocation, label: "현재 위치" }, sourceLabel: "내 위치" });
       },
       () => {
         setIsLocating(false);
@@ -326,7 +330,7 @@ function ConsumerHomePage() {
 
           <section>
             <div className="section-title-row">
-              <h2>유행 상품</h2>
+              <h2>최근 인기 검색어</h2>
               {activeProduct && (
                 <button className="clear-filter-button" onClick={clearProductFilter} type="button">
                   <X size={14} /> 전체
@@ -334,9 +338,9 @@ function ConsumerHomePage() {
               )}
             </div>
             <div className="chip-list">
-              {(products.length ? products : filteredProducts).map((product) => (
+              {displayedKeywords.map((product) => (
                 <button
-                  className={`trend-chip ${activeProductId === product.id ? "selected" : ""}`}
+                  className={`trend-chip ${activeKeywordName === product.name ? "selected" : ""}`}
                   key={product.id}
                   onClick={() => handleSelectProduct(product)}
                   type="button"
