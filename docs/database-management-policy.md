@@ -128,7 +128,7 @@ UNIQUE KEY uq_location_cache_query_normalized (query_normalized)
 3. 매칭된 상품어를 원본 검색어에서 제거한다.
 4. 상품어가 제거된 경우에만 남은 문자열을 장소 후보로 사용할 수 있다.
 5. 남은 문자열에서 장소 의도어를 제거한다.
-   - 주변, 근처, 인근, 쪽, 에서, 맛집, 추천, 예약, 파는곳
+   - 주변, 근처, 인근, 근방, 부근, 앞, 쪽, 에서, 맛집, 추천, 예약, 파는곳
 6. 상품어가 제거되지 않은 검색어는 명확한 장소 패턴이 있을 때만 장소 후보로 인정한다.
    - 예: 역, 주변, 근처, 인근, 에서, 맛집
 7. 정리된 문자열을 장소 후보로 검증한다.
@@ -189,6 +189,31 @@ UNIQUE KEY uq_location_cache_query_normalized (query_normalized)
 - "소금빵"처럼 상품어 매칭이 없고 장소 패턴도 없는 단독어는 장소 후보로 인정하지 않는다.
 - 단독어를 무조건 Kakao Local REST API로 보내면 상품명이 우연히 장소/매장명으로 검색되어 location_cache가 오염될 수 있다.
 - 상품어도 장소 후보도 없는 검색어는 사용자의 현재 기준 위치가 있더라도 주변 전체 매장을 반환하지 않는다.
+```
+
+Kakao Local REST API 무결과 또는 실패 처리:
+
+```text
+- Kakao Local REST API가 장소 후보에 대한 좌표를 반환하지 않으면 location_cache에 저장하지 않는다.
+- 좌표를 확정하지 못한 상태에서 주변 전체 매장을 반환하지 않는다.
+- 상품어가 있는 검색어라면 사용자의 현재 기준 위치가 있을 때만 상품 기준 주변 매장을 조회한다.
+- 상품어도 없고 위치도 확정하지 못하면 stores는 빈 배열로 반환하고 unmapped_searches에 저장한다.
+- 외부 API 장애가 발생하면 500 오류로 노출하기보다, 가능하면 "위치 조회 실패" 상태를 반환하고 검색 로그에 실패 원인을 남기는 방향을 권장한다.
+```
+
+향후 개선 후보:
+
+```text
+- search_logs에 location_resolution_status 컬럼 추가
+  - CACHE_HIT
+  - KAKAO_HIT
+  - KAKAO_NO_RESULT
+  - KAKAO_ERROR
+  - CLIENT_LOCATION
+- unmapped_searches에 reason 컬럼 추가
+  - UNKNOWN_PRODUCT
+  - UNKNOWN_LOCATION
+  - LOCATION_API_NO_RESULT
 ```
 
 이 정책은 상용 지도 서비스 수준의 자연어 검색을 완전히 대체하지 않는다. 상용 지도 서비스는 대규모 POI 데이터, 자동완성, 형태소 분석, 검색 로그 랭킹, 머신러닝 기반 의도 분류 등을 함께 사용할 수 있다. 본 프로젝트에서는 DB 수업 범위에 맞춰 `KeywordAlias`, `Product`, `location_cache`, `SearchLog`, `UnmappedSearch`를 활용한 규칙 기반 하이브리드 파서를 사용한다.

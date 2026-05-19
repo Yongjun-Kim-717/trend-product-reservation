@@ -19,7 +19,7 @@ function normalizeSearchText(value = "") {
   return String(value).trim().replace(/\s+/g, "").toLowerCase();
 }
 
-const LOCATION_INTENT_WORDS = ["맛집", "추천", "예약", "파는곳", "근처", "주변", "인근", "쪽", "에서"];
+const LOCATION_INTENT_WORDS = ["맛집", "추천", "예약", "파는곳", "근처", "주변", "인근", "근방", "부근", "앞", "쪽", "에서"];
 
 function sanitizeLocationCandidate(value = "") {
   let candidate = String(value).trim();
@@ -151,17 +151,26 @@ async function findLocationByText(locationText) {
   url.searchParams.set("query", locationText);
   url.searchParams.set("size", "1");
 
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `KakaoAK ${kakaoKey}`,
-    },
-  });
+  let payload;
 
-  if (!response.ok) {
-    throw new Error("Kakao Local REST API request failed.");
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Authorization: `KakaoAK ${kakaoKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      console.warn("Kakao Local REST API request failed.", response.status);
+      return null;
+    }
+
+    payload = await response.json();
+  } catch (error) {
+    console.warn("Kakao Local REST API request failed.", error.message);
+    return null;
   }
 
-  const payload = await response.json();
   const place = payload.documents?.[0];
   if (!place) return null;
 
