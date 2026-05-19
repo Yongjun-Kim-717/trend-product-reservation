@@ -207,6 +207,34 @@ async function findKeywordFromQuery(rawQuery) {
   };
 }
 
+async function findProductFromQuery(rawQuery) {
+  const normalizedQuery = normalizeSearchText(rawQuery);
+
+  const [productRows] = await pool.query(
+    `SELECT product_id, name
+       FROM products
+      WHERE status = 'ACTIVE'
+        AND ? LIKE CONCAT('%', REPLACE(LOWER(name), ' ', ''), '%')
+      ORDER BY CHAR_LENGTH(name) DESC
+      LIMIT 1`,
+    [normalizedQuery]
+  );
+
+  if (productRows.length > 0) {
+    return {
+      product_id: productRows[0].product_id,
+      name: productRows[0].name,
+      mapped: true,
+    };
+  }
+
+  return {
+    product_id: null,
+    name: null,
+    mapped: false,
+  };
+}
+
 async function logSearch({ userId, rawQuery, keyword, location, resultCount }) {
   const mappingStatus = keyword.mapped ? "MAPPED" : "UNMAPPED";
 
@@ -269,8 +297,9 @@ app.get("/api/search", async (req, res) => {
   }
 
   const keyword = await findKeywordFromQuery(rawQuery);
+  const product = keyword.keyword_id ? { product_id: null, name: null, mapped: false } : await findProductFromQuery(rawQuery);
   const location = await findLocationFromQuery(rawQuery, req.query.lat, req.query.lng, {
-    allowRawQueryLookup: !keyword.keyword_id,
+    allowRawQueryLookup: !keyword.keyword_id && !product.product_id,
   });
 
   const params = [];
@@ -279,6 +308,9 @@ app.get("/api/search", async (req, res) => {
   if (keyword.keyword_id) {
     productWhere = "AND p.name = ?";
     params.push(keyword.keyword_name);
+  } else if (product.product_id) {
+    productWhere = "AND p.product_id = ?";
+    params.push(product.product_id);
   }
 
   const [rows] = await pool.query(
