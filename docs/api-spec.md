@@ -154,6 +154,12 @@ Response:
       "keyword_name": "버터떡",
       "mapped": true
     },
+    "product": {
+      "product_id": null,
+      "name": null,
+      "raw": null,
+      "mapped": false
+    },
     "radius_km": 5,
     "stores": [
       {

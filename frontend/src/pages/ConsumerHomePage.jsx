@@ -219,7 +219,8 @@ function ConsumerHomePage() {
         radiusKm: 5,
       });
       const activeProduct = result.stores[0]?.inventory?.product_id ?? null;
-      applyStoreResult(result, result.location ? "검색어 위치 + DB" : "기본 위치 + 상품 검색", result.keyword?.keyword_name ?? "전체 상품", activeProduct);
+      const productLabel = result.keyword?.keyword_name ?? result.product?.name ?? "전체 상품";
+      applyStoreResult(result, result.location ? "검색어 위치 + DB" : "기본 위치 + 상품 검색", productLabel, activeProduct);
     } catch (error) {
       setNearbyStores([]);
       setSelectedStoreId(null);

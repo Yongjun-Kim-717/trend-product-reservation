@@ -24,8 +24,13 @@ const LOCATION_INTENT_WORDS = ["맛집", "추천", "예약", "파는곳", "근�
 function sanitizeLocationCandidate(value = "") {
   let candidate = String(value).trim();
 
-  for (const word of LOCATION_INTENT_WORDS) {
-    candidate = candidate.replace(new RegExp(`\\s*${word}\\s*$`), "");
+  let changed = true;
+  while (changed) {
+    const before = candidate;
+    for (const word of LOCATION_INTENT_WORDS) {
+      candidate = candidate.replace(new RegExp(`\\s*${word}\\s*$`), "");
+    }
+    changed = candidate !== before;
   }
 
   return candidate.trim();
@@ -39,7 +44,7 @@ function isCacheableLocationCandidate(value = "") {
 
 function extractLocationCandidate(rawQuery) {
   const query = String(rawQuery).trim();
-  const locationPattern = /(.+?)(?:\s*(?:주변|근처|인근|쪽|에서)\s*)/;
+  const locationPattern = /(.+?)(?:\s*(?:주변|근처|인근|쪽|에서|맛집)\s*)/;
   const matched = query.match(locationPattern);
 
   if (matched?.[1]) {
@@ -54,6 +59,33 @@ function extractLocationCandidate(rawQuery) {
   return null;
 }
 
+function escapeRegExp(value = "") {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function removeMatchedTerms(rawQuery, terms = []) {
+  let remaining = String(rawQuery).trim();
+
+  for (const term of terms.filter(Boolean)) {
+    remaining = remaining.replace(new RegExp(escapeRegExp(term), "gi"), " ");
+    remaining = remaining.replace(new RegExp(escapeRegExp(normalizeSearchText(term)), "gi"), " ");
+  }
+
+  return remaining.replace(/\s+/g, " ").trim();
+}
+
+function deriveLocationCandidate(rawQuery, matchedTerms = []) {
+  const hasMatchedTerm = matchedTerms.filter(Boolean).length > 0;
+  const remaining = removeMatchedTerms(rawQuery, matchedTerms);
+  const fromRemaining = sanitizeLocationCandidate(remaining);
+
+  if (hasMatchedTerm && isCacheableLocationCandidate(fromRemaining)) {
+    return fromRemaining;
+  }
+
+  return extractLocationCandidate(rawQuery);
+}
+
 function calculateDistanceKm(from, to) {
   if (!from || !to) return null;
   const earthRadiusKm = 6371;
@@ -66,20 +98,15 @@ function calculateDistanceKm(from, to) {
   return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-async function findLocationFromQuery(rawQuery, fallbackLat, fallbackLng, { allowRawQueryLookup = false } = {}) {
-  const locationCandidate = extractLocationCandidate(rawQuery);
+async function findLocationFromQuery(rawQuery, fallbackLat, fallbackLng, { matchedTerms = [], allowClientFallback = true } = {}) {
+  const locationCandidate = deriveLocationCandidate(rawQuery, matchedTerms);
 
   if (locationCandidate) {
     const cached = await findLocationByText(locationCandidate);
     if (cached) return cached;
   }
 
-  if (allowRawQueryLookup) {
-    const searched = await findLocationByText(sanitizeLocationCandidate(rawQuery));
-    if (searched) return searched;
-  }
-
-  if (fallbackLat && fallbackLng) {
+  if (allowClientFallback && fallbackLat && fallbackLng) {
     return {
       query: "현재 위치",
       latitude: Number(fallbackLat),
@@ -224,6 +251,7 @@ async function findProductFromQuery(rawQuery) {
     return {
       product_id: productRows[0].product_id,
       name: productRows[0].name,
+      raw: productRows[0].name,
       mapped: true,
     };
   }
@@ -231,12 +259,13 @@ async function findProductFromQuery(rawQuery) {
   return {
     product_id: null,
     name: null,
+    raw: rawQuery,
     mapped: false,
   };
 }
 
-async function logSearch({ userId, rawQuery, keyword, location, resultCount }) {
-  const mappingStatus = keyword.mapped ? "MAPPED" : "UNMAPPED";
+async function logSearch({ userId, rawQuery, keyword, location, resultCount, mapped = keyword.mapped }) {
+  const mappingStatus = mapped ? "MAPPED" : "UNMAPPED";
 
   await pool.query(
     `INSERT INTO search_logs (user_id, keyword_id, raw_query, location_query, result_count, mapping_status)
@@ -244,7 +273,7 @@ async function logSearch({ userId, rawQuery, keyword, location, resultCount }) {
     [userId || null, keyword.keyword_id, rawQuery, location?.query ?? null, resultCount, mappingStatus]
   );
 
-  if (!keyword.mapped) {
+  if (!mapped) {
     const normalized = normalizeSearchText(rawQuery);
     await pool.query(
       `INSERT INTO unmapped_searches (raw_query, raw_query_normalized, count, status)
@@ -298,9 +327,12 @@ app.get("/api/search", async (req, res) => {
 
   const keyword = await findKeywordFromQuery(rawQuery);
   const product = keyword.keyword_id ? { product_id: null, name: null, mapped: false } : await findProductFromQuery(rawQuery);
+  const matchedTerms = [keyword.keyword_id ? keyword.raw : null, product.product_id ? product.raw : null];
   const location = await findLocationFromQuery(rawQuery, req.query.lat, req.query.lng, {
-    allowRawQueryLookup: !keyword.keyword_id && !product.product_id,
+    matchedTerms,
+    allowClientFallback: Boolean(keyword.keyword_id || product.product_id),
   });
+  const hasSearchIntent = Boolean(keyword.keyword_id || product.product_id || location);
 
   const params = [];
   let productWhere = "";
@@ -311,6 +343,19 @@ app.get("/api/search", async (req, res) => {
   } else if (product.product_id) {
     productWhere = "AND p.product_id = ?";
     params.push(product.product_id);
+  }
+
+  if (!hasSearchIntent) {
+    await logSearch({
+      userId: req.query.userId,
+      rawQuery,
+      keyword,
+      location: null,
+      resultCount: 0,
+      mapped: false,
+    });
+
+    return res.json(ok({ location: null, keyword, product, radius_km: radiusKm, stores: [] }));
   }
 
   const [rows] = await pool.query(
@@ -360,9 +405,10 @@ app.get("/api/search", async (req, res) => {
     keyword,
     location,
     resultCount: stores.length,
+    mapped: Boolean(keyword.keyword_id || product.product_id),
   });
 
-  res.json(ok({ location, keyword, radius_km: radiusKm, stores }));
+  res.json(ok({ location, keyword, product, radius_km: radiusKm, stores }));
 });
 
 app.get("/api/stores/nearby", async (req, res) => {
