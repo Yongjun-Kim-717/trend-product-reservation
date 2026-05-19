@@ -48,8 +48,8 @@ INSERT INTO stores (seller_id, name, address, latitude, longitude, phone, openin
 (1, '강남 두쫀쿠 카페 본점', '서울 강남구 테헤란로 1', 37.4980, 127.0276, '02-1111-0001', '09:00-21:00', 'APPROVED'),
 (1, '강남 두쫀쿠 카페 2호점', '서울 강남구 역삼동 2', 37.4990, 127.0280, '02-1111-0002', '09:00-21:00', 'APPROVED'),
 (2, '홍대 버터떡', '서울 마포구 홍익로 10', 37.5563, 126.9220, '02-2222-0001', '10:00-22:00', 'APPROVED'),
-(3, '루나 카페', '서울 성동구 성수동 55', 37.5500, 127.0400, '02-3333-0001', '08:00-23:00', 'PENDING'); --미승인
-
+(3, '루나 카페', '서울 성동구 성수동 55', 37.5500, 127.0400, '02-3333-0001', '08:00-23:00', 'PENDING'),
+(2, '부평 버터떡 팝업스토어', '인천 부평구 부평대로 12', 37.4897, 126.7245, '032-111-2222', '10:00-22:00', 'APPROVED');
 
 /* =========================
    6. PRODUCT CATEGORIES
@@ -91,8 +91,11 @@ INSERT INTO inventories (store_id, product_id, total_stock, reservable_stock, re
 -- 홍대 버터떡
 (3, 2, 120, 80, 10),
 (3, 5, 70, 40, 5),
-(3, 6, 60, 30, 10);
+(3, 6, 60, 30, 10),
 
+-- 부평 버터떡 팝업스토어
+(5, 2, 100, 70, 10),
+(5, 3, 50, 20, 5);
 
 /* =========================
    9. RESERVATIONS
@@ -115,36 +118,66 @@ INSERT INTO keywords (keyword_name, trend_score, status) VALUES
 /* =========================
    11. KEYWORD ALIASES
 ========================= */
-INSERT INTO keyword_aliases (keyword_id, alias) VALUES
-(1, '두바이쫀득쿠키'),
-(1, '두바이 쫀득 쿠키'),
-(1, '두존쿠'),
-(1, 'ㄷㅉㅋ'),
-(1, 'enWhszn'),
-(1, 'dzonku'),
-(2, '버터'),
-(2, 'butter'),
-(2, 'qjxjEjr'),
-(3, '아아'),
-(3, 'dkdk'),
-(3, 'dkapflzksh'),
-(3, '아이스커피');
+INSERT INTO keyword_aliases
+(keyword_id, alias, alias_normalized)
+VALUES
+(1, '두바이쫀득쿠키', '두바이쫀득쿠키'),
+(1, '두바이 쫀득 쿠키', '두바이쫀득쿠키'),
+(1, '두존쿠', '두존쿠'),
+(1, 'ㄷㅉㅋ', 'ㄷㅉㅋ'),
+(1, 'enWhszn', 'enwhszn'),
+(1, 'dzonku', 'dzonku'),
+
+(2, '버터', '버터'),
+(2, 'butter', 'butter'),
+(2, 'qjxjEjr', 'qjxjejr'),
+
+(3, '아아', '아아'),
+(3, 'dkdk', 'dkdk'),
+(3, 'dkapflzksh', 'dkapflzksh'),
+(3, '아이스커피', '아이스커피');
 
 
 /* =========================
    12. SEARCH LOGS
 ========================= */
-INSERT INTO search_logs (user_id, keyword_id, raw_query) VALUES
-(2, 1, '두쫀쿠'),
-(3, 2, '버터떡'),
-(2, NULL, '크로플');
+INSERT INTO search_logs(user_id, keyword_id, raw_query, location_query, result_count, mapping_status)
+VALUES
+(2, 1, '강남역 주변 두쫀쿠', '강남역', 2, 'MAPPED'),
+
+(3, 2, '홍대입구역 버터떡', '홍대입구역', 1, 'MAPPED'),
+
+(2, NULL, '크로플', NULL, 0, 'UNMAPPED');
 
 
 /* =========================
    13. UNMAPPED SEARCHES
 ========================= */
-INSERT INTO unmapped_searches (raw_query, count) VALUES
-('크로플', 5),
-('흑당버블티', 3);
--- Seed data intentionally left empty.
--- Add team-approved sample data here after the final schema and role-based user model are confirmed.
+INSERT INTO unmapped_searches(raw_query, raw_query_normalized, count, status)
+VALUES
+('크로플', '크로플', 5, 'PENDING'),
+('흑당버블티', '흑당버블티', 3, 'PENDING');
+
+/* =========================
+   14. location_cache
+========================= */
+INSERT INTO location_cache(query, query_normalized, latitude, longitude, source)
+VALUES
+('강남역', '강남역', 37.4979, 127.0276, 'MANUAL'),
+
+('홍대입구역', '홍대입구역', 37.5572, 126.9245, 'MANUAL'),
+
+('성수역', '성수역', 37.5446, 127.0559, 'MANUAL'),
+
+('부평역', '부평역', 37.4904, 126.7248, 'MANUAL');
+
+/* =========================
+   14. reservation_status_logs seed
+========================= */
+
+INSERT INTO reservation_status_logs(reservation_id, previous_status, new_status, changed_by_user_id, changed_by_role, reason)
+VALUES
+(1, NULL, 'PENDING', 2, 'CONSUMER', '예약 생성'),
+(2, 'PENDING', 'APPROVED', 5, 'SELLER', '판매자 승인'),
+(3, 'PENDING', 'CANCELED', 4, 'CONSUMER', '사용자 취소');
+
