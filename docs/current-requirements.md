@@ -1,656 +1,355 @@
-# 최신 요구사항 명세서
+# 최종 요구사항 명세서
 
-최종 수정일: 2026-05-19
+최종 수정일: 2026-05-22
 
 ## 1. 프로젝트 개요
 
-본 프로젝트는 유행 상품을 사용자의 위치 또는 검색 위치 기준으로 탐색하고, 카카오맵 기반으로 주변 매장 위치와 상품 재고를 확인한 뒤 예약까지 진행할 수 있는 플랫폼이다.
+본 프로젝트는 사용자 위치 또는 검색어에 포함된 장소를 기준으로 주변 매장의 유행 상품을 탐색하고, 매장별 재고 확인과 예약을 제공하는 웹 서비스이다.
 
-초기 유행 상품은 관리자가 등록하고, 이후에는 사용자 검색 로그와 키워드 매핑 데이터를 기반으로 유행 상품 순위를 산정한다.
+초기 유행 상품은 관리자가 기준 키워드와 별칭을 관리하고, 이후에는 사용자의 검색 로그를 기반으로 최근 인기 검색어를 산정한다. 프론트엔드는 React, 백엔드는 Node.js/Express, 데이터베이스는 MariaDB를 사용한다.
 
 ## 2. 시스템 목적
 
-```text
-소비자
-- 현재 위치 또는 검색 위치 기준으로 주변 매장의 유행 상품을 찾는다.
-- 매장별 예약 가능 재고를 확인하고 상품을 예약한다.
+- 소비자는 상품명 또는 장소+상품명 검색으로 주변 매장을 찾고 예약할 수 있다.
+- 판매자는 여러 매장을 등록하고, 매장별 상품과 재고, 예약 상태를 관리할 수 있다.
+- 관리자는 판매자/매장 승인, 키워드/별칭, 미매핑 검색어, 검색 로그를 관리할 수 있다.
+- 예약과 재고 변경은 트랜잭션으로 처리하여 동시 예약 상황에서도 재고 정합성을 보장한다.
 
-판매자
-- 매장 정보, 판매 상품, 재고, 예약 상태를 관리한다.
-- 온라인 예약 가능 재고와 오프라인 판매량을 반영한다.
+## 3. 사용자 유형
 
-관리자
-- 사용자, 판매자, 매장, 상품 카테고리, 키워드, 검색 로그를 관리한다.
-- 미매핑 검색어를 검토하여 검색 품질과 유행 상품 데이터를 개선한다.
-```
+### 3.1 소비자
 
-## 3. 사용자 역할 요구사항
-
-### 3.1 소비자 User
-
-소비자는 서비스를 이용해 유행 상품을 검색하고 예약하는 사용자이다.
+소비자는 상품을 검색하고 예약하는 사용자이다.
 
 주요 기능:
 
-```text
-- 소비자 역할 선택 및 로그인
-- 현재 위치 기반 주변 매장 조회
-- 검색어 기반 위치 + 상품 검색
+- 회원가입 및 로그인
+- 현재 위치 또는 검색어의 장소 기준 주변 매장 조회
+- 유행 상품 키워드 검색
 - 카카오맵 기반 매장 위치 확인
-- 지도 마커와 매장 카드 연동
-- 매장별 상품 재고 확인
+- 매장 상세 정보 확인
+- 매장별 상품 및 예약 가능 재고 확인
 - 상품 예약
 - 예약 취소
 - 본인 예약 내역 조회
-```
 
-소비자 저장 정보:
+저장 정보:
 
-```text
-- 닉네임
-- 기본 위치 또는 최근 위치
-- 알림 수신 여부
-```
+- 기본 계정 정보: 아이디, 비밀번호 해시, 이름, 연락처, 계정 상태
+- 소비자 프로필: 닉네임, 기본 위치, 알림 수신 여부
+- 예약 내역
+- 검색 로그
 
-### 3.2 판매자 Store Owner / Seller
+### 3.2 판매자
 
-판매자는 매장과 상품 재고를 관리하는 사용자이다.
+판매자는 매장과 상품 재고, 예약을 관리하는 사용자이다. 한 명의 판매자는 여러 매장을 등록할 수 있다.
 
 주요 기능:
 
-```text
-- 판매자 역할 선택 및 로그인
+- 회원가입 및 로그인
+- 판매자 사업자 정보 등록
 - 매장 정보 등록 및 수정
-- 판매 상품 등록
-- 단일 대표 상품 이미지 등록
-- 상품별 total_stock, reservable_stock 설정
-- 예약 가능 재고 수정
-- 예약 목록 확인
+- 상품 등록 및 수정
+- 단일 대표 이미지 업로드
+- 상품별 전체 재고 및 예약 가능 재고 설정
+- 예약 목록 조회
 - 예약 승인
 - 예약 취소
 - 수령 완료 처리
 - 오프라인 판매량 반영
-```
 
-판매자 저장 정보:
+저장 정보:
 
-```text
-- 사업자명
-- 사업자등록번호
-- 대표자명
-- 연락처
-- 판매자 승인 상태
-- 매장 정보
-```
+- 기본 계정 정보
+- 판매자 프로필: 사업자명, 사업자등록번호, 대표자명, 연락처, 승인 상태
+- 매장 정보: 매장명, 주소, 좌표, 연락처, 영업시간, 승인 상태
+- 상품 정보 및 재고 정보
 
-### 3.3 관리자 Admin
+### 3.3 관리자
 
-관리자는 서비스 전체 데이터와 운영 정책을 관리하는 사용자이다.
+관리자는 서비스 운영 데이터와 정책 데이터를 관리하는 사용자이다.
 
 주요 기능:
 
-```text
-- 관리자 역할 선택 및 로그인
 - 사용자 계정 관리
 - 판매자 승인 및 반려
 - 매장 승인 및 반려
 - 상품 카테고리 관리
-- 유행 상품 기준 키워드 등록
+- 기준 키워드 관리
 - KeywordAlias 관리
 - 미매핑 검색어 검토
 - 미매핑 검색어를 기존 키워드 별칭으로 등록
-- 미매핑 검색어를 신규 키워드로 생성
-- 미매핑 검색어 보류 및 반려
-- 미매핑 처리 취소
-- 부적절한 상품 및 매장 데이터 관리
-- 검색 로그 조회
-- 유행 상품 순위 및 시스템 통계 확인
-```
+- 미매핑 검색어를 새 기준 키워드로 생성
+- 미매핑 검색어 보류, 반려, 삭제
+- 검색 로그 조회 및 페이지 관리
+- 최근 인기 검색어 확인
 
-관리자 저장 정보:
+저장 정보:
 
-```text
-- 소속 부서
-- 권한 등급
-- 운영 권한
-```
+- 기본 계정 정보
+- 관리자 프로필: 부서, 권한 등급
+- 관리자 처리 이력은 예약 상태 로그, 미매핑 검색어 처리 정보 등에 반영된다.
 
-## 4. 현재 구현된 프론트엔드 화면
+## 4. 주요 화면 요구사항
 
-현재 프론트엔드는 React + Vite 기반이며, 역할별 화면을 라우팅으로 분리한다.
+### 4.1 로그인 화면
 
-```text
-/login
-/consumer
-/consumer/reservations/new
-/seller
-/seller/products/new
-/admin
-```
+- 아이디와 비밀번호로 로그인한다.
+- 로그인 성공 시 계정의 역할에 따라 소비자, 판매자, 관리자 화면으로 이동한다.
+- 별도의 역할 선택 버튼은 필요하지 않다. 역할은 DB의 사용자 계정 정보가 결정한다.
 
-화면별 목적:
+### 4.2 소비자 메인 화면
 
-```text
-/login
-- 소비자 / 판매자 / 관리자 역할 선택
-- 역할별 로그인 진입 화면
+- 카카오맵을 표시한다.
+- 초기 상태에서는 기본 기준 위치 주변 매장을 표시한다.
+- 검색창은 빈 상태로 시작한다.
+- 상품명만 검색하면 현재 기준 위치 주변의 해당 상품 매장을 조회한다.
+- 장소+상품명 검색이면 검색어에서 장소 후보를 추출하고, Kakao Local REST API로 좌표를 찾은 뒤 해당 위치 주변 매장을 조회한다.
+- 지도 마커와 매장 카드가 서로 연동된다.
+- 매장 선택 시 지도 위에 매장 정보 패널을 유지해서 표시한다.
+- 매장 정보 화면과 예약 화면으로 이동할 수 있다.
 
-/consumer
-- 소비자 메인 화면
-- 카카오맵 표시
-- 상품 검색
-- 추천 유행 상품 표시
-- 현재 위치 또는 검색 위치 기준 주변 매장 표시
-- 지도 마커와 매장 카드 연동
-- 선택 매장 정보 패널 지속 표시
-- 예약 화면 이동
+### 4.3 소비자 예약 화면
 
-/consumer/reservations/new
-- 상품 예약 화면
-- 매장 정보, 상품 정보, 예약 가능 재고 표시
-- 수량 입력
-- 방문 예정 시간 입력
-- 예약 가능 재고 초과 방지
-- 방문 시간 최소 30분 이후 검증
+- 매장명, 주소, 영업시간, 상품명, 대표 이미지, 재고 정보를 표시한다.
+- 예약 수량과 방문 예정 시간을 입력한다.
+- 예약 가능 재고보다 많은 수량은 예약할 수 없다.
+- 방문 예정 시간은 현재 시간보다 최소 30분 이후여야 한다.
+- 방문 예정 시간은 매장 영업시간 안에 있어야 한다.
+- 예약 완료 후 내 예약 화면으로 이동할 수 있다.
 
-/seller
-- 판매자 메인 화면
-- 매장 정보 확인
-- 등록 상품 및 재고 확인
-- 예약 가능 재고 수정
-- 예약 승인 / 취소 / 수령 완료 처리
-- 오프라인 판매량 반영
+### 4.4 소비자 내 예약 화면
 
-/seller/products/new
-- 판매자 상품 등록 화면
-- 상품명, 카테고리, 가격, 설명 입력
-- 단일 대표 이미지 등록 및 정사각형 미리보기
-- 초기 재고 및 예약 가능 재고 설정
+- 본인 예약 내역을 조회한다.
+- 예약 상태를 확인한다.
+- 예약 가능한 상태에서는 예약 취소를 할 수 있다.
+- 예약한 매장의 상세 정보로 이동할 수 있다.
 
-/admin
-- 관리자 데이터 관리 화면
-- 키워드 관리
-- 별칭 등록
-- 새 키워드 생성
-- 미매핑 검색어 검토
-- 보류 / 반려 / 처리 취소
-- 검색 로그 확인
-```
+### 4.5 판매자 메인 화면
+
+- 판매자 본인의 매장 목록을 표시한다.
+- 선택한 매장의 상품 목록, 재고, 예약 목록을 표시한다.
+- 예약 가능 재고는 입력 후 저장 버튼을 눌러 반영한다.
+- 예약 승인, 취소, 수령 완료 처리를 할 수 있다.
+- 가게 등록, 가게 수정, 상품 등록, 상품 수정 화면으로 이동할 수 있다.
+
+### 4.6 판매자 매장/상품 등록 화면
+
+- 매장 등록 시 주소를 입력하면 백엔드에서 Kakao Local REST API를 통해 좌표를 저장한다.
+- 새 매장은 관리자 승인 전까지 소비자 검색 결과에 노출되지 않는다.
+- 상품 등록 시 상품명, 카테고리, 설명, 가격, 대표 이미지, 전체 재고, 예약 가능 재고를 입력한다.
+- 상품 이미지는 파일 자체를 DB에 저장하지 않고 서버 파일 경로를 DB에 저장한다.
+
+### 4.7 관리자 화면
+
+- 미매핑 검색어, 키워드 관리, 검색 로그, 매장 승인, 판매자 승인, 사용자 관리 탭을 제공한다.
+- 검색 로그는 페이지 단위로 조회한다.
+- 미매핑 검색어는 기존 키워드의 별칭 등록, 새 키워드 생성, 보류, 반려, 삭제가 가능해야 한다.
+- 판매자와 매장 승인 상태를 변경할 수 있어야 한다.
 
 ## 5. 위치 기반 검색 요구사항
 
-브라우저 Geolocation은 데스크톱 환경에서 실제 위치와 오차가 클 수 있으므로, 위치 기준은 다음 우선순위로 결정한다.
+위치 기준은 다음 우선순위로 결정한다.
 
-```text
-1. 검색어 안에서 추출한 위치어
-   예) 부평역 주변 버터떡, 성수역 두쫀쿠
-
-2. 브라우저 Geolocation 또는 사용자 기본 위치
-   예) lat/lng 파라미터
-
+1. 검색어에서 추출한 장소
+2. 브라우저 Geolocation으로 얻은 사용자 현재 위치
 3. 서비스 기본 위치
-   개발 초기 fallback 좌표
-```
 
-백엔드는 검색어에서 위치 의도와 상품 의도를 분리한다.
+검색어 예시:
 
-예시:
+- `인하대학교 후문 두쫀쿠`
+  - 장소 후보: 인하대학교 후문
+  - 상품 후보: 두쫀쿠
+- `부평역 주변 버터떡`
+  - 장소 후보: 부평역
+  - 상품 후보: 버터떡
+- `두쫀쿠`
+  - 장소 후보 없음
+  - 현재 기준 위치 주변에서 두쫀쿠 매장 조회
 
-```text
-입력: 부평역 주변 버터떡
-위치 의도: 부평역
-상품 의도: 버터떡
-```
+장소 후보 처리 정책:
 
-위치어는 Kakao Local REST API로 좌표 변환하고, 결과는 `location_cache`에 저장하여 반복 API 호출을 줄인다.
+- 검색어에서 상품명 또는 별칭을 먼저 찾고 제거한다.
+- 남은 문자열에서 `주변`, `근처`, `앞`, `에서`, `맛집`, `추천`, `예약`, `파는곳` 같은 의도어를 제거한다.
+- 장소 후보는 공백 제거 후 2자 이상 20자 이하일 때만 위치 캐시 또는 Kakao Local REST API 조회 대상으로 사용한다.
+- 좌표를 찾지 못한 장소 후보는 location_cache에 저장하지 않는다.
 
-프론트엔드는 Kakao Map JavaScript API를 사용하여 매장 마커, 내 위치 또는 검색 기준 위치, 매장 카드를 표시한다.
+## 6. 상품 이미지 요구사항
 
-## 6. 상품 이미지 관리 요구사항
-
-상품 이미지는 단일 대표 이미지만 사용한다.
-
-DB에는 이미지 파일 자체를 저장하지 않고 이미지 URL 또는 서버 파일 경로만 저장한다.
-
-권장 컬럼:
-
-```text
-products.image_url
-```
-
-예시:
-
-```text
-/uploads/products/butter-rice-cake.jpg
-```
-
-이미지 업로드 흐름:
-
-```text
-1. 판매자가 상품 대표 이미지 업로드
-2. 백엔드가 파일을 uploads 폴더 또는 정적 파일 저장소에 저장
-3. DB에는 image_url만 저장
-4. 프론트는 API 응답의 image_url을 이용해 이미지 표시
-```
+- 상품 이미지는 단일 대표 이미지만 사용한다.
+- DB에는 이미지 바이너리를 저장하지 않고 이미지 URL 또는 서버 파일 경로만 저장한다.
+- 로컬 및 EC2 배포에서는 `/uploads/products/...` 경로를 사용한다.
+- 추후 확장 시 S3 같은 객체 스토리지를 사용할 수 있다.
 
 ## 7. 재고 관리 요구사항
 
-재고는 세 값으로 분리한다.
+재고는 다음 세 값으로 분리한다.
 
-```text
-total_stock
-- 실제 매장 전체 재고
+- `total_stock`: 실제 매장 보유 재고
+- `reservable_stock`: 온라인 예약 가능 재고
+- `reserved_stock`: 이미 예약된 재고
 
-reservable_stock
-- 온라인 예약 가능 재고
+검증 규칙:
 
-reserved_stock
-- 이미 예약된 재고
-```
+- `total_stock >= 0`
+- `reservable_stock >= 0`
+- `reserved_stock >= 0`
+- `reservable_stock + reserved_stock <= total_stock`
+- 판매자는 `reserved_stock`을 직접 수정하지 않는다.
 
-재고 검증 규칙:
+상태별 재고 변화:
 
-```text
-- total_stock >= 0
-- reservable_stock >= 0
-- reserved_stock >= 0
-- reservable_stock + reserved_stock <= total_stock
-- reserved_stock은 판매자가 직접 수정하지 않는다.
-```
+- 예약 생성: `reservable_stock` 감소, `reserved_stock` 증가
+- 예약 취소: `reserved_stock` 감소, `reservable_stock` 증가
+- 수령 완료: `reserved_stock` 감소
+- 오프라인 판매 반영: `total_stock`과 필요 시 `reservable_stock` 감소
 
-예약 생성 시:
+## 8. 예약 및 병행제어 요구사항
 
-```text
-reservable_stock 감소
-reserved_stock 증가
-reservation.status = PENDING
-```
-
-예약 취소 시:
-
-```text
-reserved_stock 감소
-reservable_stock 증가
-reservation.status = CANCELED
-```
-
-수령 완료 시:
-
-```text
-reserved_stock 감소
-reservation.status = PICKED_UP
-```
-
-오프라인 판매 반영 시:
-
-```text
-total_stock 감소
-reservable_stock 감소
-reserved_stock은 변경하지 않음
-```
-
-## 8. 예약 병행제어 및 회복 요구사항
-
-예약과 재고 변경은 데이터 정합성이 가장 중요한 기능이므로 반드시 트랜잭션으로 처리한다.
-
-트랜잭션 필수 작업:
-
-```text
-- 예약 생성
-- 예약 취소
-- 판매자 예약 상태 변경
-- 판매자 재고 수정
-- 오프라인 판매량 반영
-```
+예약 생성, 예약 취소, 수령 완료, 재고 수정은 트랜잭션으로 처리한다.
 
 예약 생성 처리 원칙:
 
-```text
-1. START TRANSACTION
-2. inventory 행 SELECT ... FOR UPDATE
-3. reservable_stock >= quantity 검증
-4. 조건부 UPDATE로 재고 차감
-5. affectedRows 확인
-6. reservations 생성
-7. reservation_status_logs 기록
-8. COMMIT
-9. 실패 시 ROLLBACK
-```
+1. `START TRANSACTION`
+2. 대상 `inventories` 행을 `SELECT ... FOR UPDATE`로 잠근다.
+3. `reservable_stock >= quantity`를 검증한다.
+4. 조건부 `UPDATE`로 재고를 차감한다.
+5. `affectedRows`를 확인한다.
+6. `reservations`를 생성한다.
+7. `reservation_status_logs`에 상태 변경 이력을 기록한다.
+8. 성공 시 `COMMIT`, 실패 시 `ROLLBACK`한다.
 
-조건부 재고 차감 예시:
+허용 예약 상태 전이:
 
-```sql
-UPDATE inventories
-SET reservable_stock = reservable_stock - ?,
-    reserved_stock = reserved_stock + ?
-WHERE inventory_id = ?
-  AND reservable_stock >= ?;
-```
-
-회복 요구사항:
-
-```text
-- 재고 변경과 예약 생성/상태 변경은 부분 반영되면 안 된다.
-- 중간 실패 시 반드시 ROLLBACK한다.
-- 예약 상태 변경 이력은 reservation_status_logs에 저장한다.
-- 상태 로그는 장애 후 추적과 수동 복구 근거로 사용한다.
-```
-
-예약 상태 전이:
-
-```text
-PENDING -> APPROVED
-PENDING -> CANCELED
-APPROVED -> PICKED_UP
-APPROVED -> CANCELED
-```
+- `PENDING -> APPROVED`
+- `PENDING -> CANCELED`
+- `APPROVED -> PICKED_UP`
+- `APPROVED -> CANCELED`
 
 최종 상태:
 
-```text
-CANCELED
-PICKED_UP
-```
+- `CANCELED`
+- `PICKED_UP`
 
-최종 상태는 일반 사용자가 되돌릴 수 없다.
+## 9. 검색 및 키워드 요구사항
 
-## 9. 검색어 및 유행 상품 관리 요구사항
-
-사용자의 검색어를 그대로 유행 상품 기준 키워드로 사용하지 않는다. 검색어는 `KeywordAlias`를 통해 기준 키워드인 `Keyword`로 매핑한다.
+사용자 검색어는 그대로 인기 상품 기준으로 사용하지 않고 `KeywordAlias`를 통해 기준 키워드인 `Keyword`로 매핑한다.
 
 예시:
 
-```text
-버터떡
-버터 떡
-버터떡 맛집
-버터떡 파는곳
-→ 기준 키워드: 버터떡
-```
+- `버터떡`
+- `버터 떡`
+- `버터떡 맛집`
+
+위 검색어들은 모두 기준 키워드 `버터떡`으로 묶을 수 있다.
 
 검색 처리 흐름:
 
-```text
-1. 사용자가 검색어 입력
+1. 사용자 검색어 입력
 2. 검색어 정규화
-3. 위치 후보와 상품 키워드 후보 분리
-4. 상품 키워드를 keyword_aliases.alias_normalized와 매칭
-5. 매칭 성공 시 search_logs에 keyword_id와 함께 저장
-6. 매칭 실패 시 unmapped_searches에 저장 또는 count 증가
-7. 관리자 검토 후 별칭 등록, 새 키워드 생성, 보류, 반려 처리
-```
+3. 상품 후보와 장소 후보 분리
+4. 상품 후보를 `keyword_aliases.alias_normalized`와 매칭
+5. 매칭 성공 시 `search_logs.keyword_id`에 기준 키워드 저장
+6. 매칭 실패 시 `unmapped_searches`에 저장하거나 count 증가
+7. 관리자가 미매핑 검색어를 검토하여 별칭 등록, 새 키워드 생성, 보류, 반려, 삭제 처리
 
-새 기준 키워드 등록 제약:
+기준 키워드 생성 제약:
 
-```text
 - 2자 이상 20자 이하
 - 공백 금지
-- 검색 의도 단어 금지
-  예) 맛집, 예약, 파는곳, 추천, 근처, 요즘, 신상
+- 상품을 대표하는 명사 중심
+- `맛집`, `예약`, `추천`, `근처`, `주변`, `파는곳` 같은 의도어 금지
 - 기존 기준 키워드와 중복 금지
-- 특정 상품을 대표하는 명사 중심으로 등록
-```
 
-미매핑 검색어 처리 결과:
+## 10. 최근 인기 검색어 요구사항
 
-```text
-별칭 등록
-- 기존 기준 키워드의 alias로 연결
+- 소비자 화면의 인기 영역은 특정 상품 레코드가 아니라 `Keyword` 기준으로 표시한다.
+- 최근 7일 `search_logs` 중 `mapping_status = 'MAPPED'`이고 `keyword_id`가 있는 로그를 집계한다.
+- 집계 기준은 `keyword_id`별 `COUNT(*)`이다.
+- 정렬은 검색 수 내림차순, 최근 검색 시각 내림차순으로 한다.
+- 검색 로그가 부족하면 관리자가 설정한 `keywords.trend_score`를 fallback으로 사용할 수 있다.
 
-새 키워드 생성
-- 새로운 기준 키워드와 alias 생성
+## 11. 주요 데이터베이스 개체
 
-보류
-- 판단 유예, 검색량 증가 또는 상품성 확인 후 재검토
+주요 테이블:
 
-반려
-- 상품 키워드로 부적절하여 검토 흐름에서 제외
-
-처리 취소
-- 잘못 처리한 미매핑 검색어의 결과를 되돌림
-```
-
-## 10. 주요 데이터베이스 개체
-
-핵심 테이블:
-
-```text
-users
-consumer_profiles
-seller_profiles
-admin_profiles
-stores
-product_categories
-products
-inventories
-reservations
-reservation_status_logs
-keywords
-keyword_aliases
-search_logs
-unmapped_searches
-location_cache
-```
+- `users`
+- `consumer_profiles`
+- `seller_profiles`
+- `admin_profiles`
+- `stores`
+- `product_categories`
+- `products`
+- `inventories`
+- `reservations`
+- `reservation_status_logs`
+- `keywords`
+- `keyword_aliases`
+- `search_logs`
+- `unmapped_searches`
+- `location_cache`
 
 주요 관계:
 
-```text
-User 1:N Reservation
-SellerProfile 1:N Store
-Store 1:N Inventory
-Product 1:N Inventory
-Inventory 1:N Reservation
-Keyword 1:N KeywordAlias
-Keyword 1:N SearchLog
-```
+- User 1:N Reservation
+- User 1:1 ConsumerProfile
+- User 1:1 SellerProfile
+- User 1:1 AdminProfile
+- SellerProfile 1:N Store
+- Store 1:N Inventory
+- Product 1:N Inventory
+- Inventory 1:N Reservation
+- Keyword 1:N KeywordAlias
+- Keyword 1:N SearchLog
 
-## 11. 주요 인덱스 요구사항
+## 12. 주요 인덱스 요구사항
 
-권장 인덱스:
+- `users(login_id)` UNIQUE
+- `seller_profiles(user_id)` UNIQUE
+- `stores(seller_id)`
+- `stores(latitude, longitude)`
+- `inventories(store_id, product_id)` UNIQUE
+- `reservations(user_id)`
+- `reservations(inventory_id, status)`
+- `reservation_status_logs(reservation_id, created_at)`
+- `keyword_aliases(alias_normalized)` UNIQUE
+- `search_logs(keyword_id, created_at)`
+- `unmapped_searches(raw_query_normalized)` UNIQUE
+- `location_cache(query_normalized)` UNIQUE
 
-```text
-stores(latitude, longitude)
-inventories(store_id, product_id) UNIQUE
-reservations(user_id)
-reservations(inventory_id, status)
-reservation_status_logs(reservation_id, created_at)
-keyword_aliases(alias_normalized) UNIQUE
-search_logs(keyword_id, created_at)
-unmapped_searches(raw_query_normalized) UNIQUE
-location_cache(query_normalized) UNIQUE
-```
+## 13. 배포 및 시연 환경 요구사항
 
-성능 고려사항:
+배포 구조:
 
-```text
-- 검색어 매핑은 LIKE '%검색어%'보다 정규화된 alias exact match 우선
-- Kakao Local REST API 결과는 location_cache에 저장
-- 위치 기반 검색은 stores(latitude, longitude) 인덱스 활용
-- 검색 로그는 초기 구현에서는 동기 INSERT 허용
-```
+- EC2: React 정적 파일, Node.js 백엔드, Nginx, MariaDB
+- Nginx: 프론트 정적 파일 제공, `/api`와 `/uploads`를 백엔드로 프록시
+- MariaDB: EC2 내부 로컬 DB 사용
 
-## 12. API 요구사항 요약
+환경변수:
 
-프론트엔드와 연결할 핵심 API:
+- 실제 `.env` 파일은 GitHub에 커밋하지 않는다.
+- GitHub에는 `.env.example`만 관리한다.
+- 카카오 JavaScript 키는 프론트 빌드 환경변수에 저장한다.
+- 카카오 REST API 키와 DB 접속 정보는 백엔드 `.env`에 저장한다.
 
-```text
-GET /api/health
-GET /api/products
-GET /api/keywords/trending
-GET /api/search?query=...&lat=...&lng=...
-GET /api/stores/nearby
-GET /api/stores/:storeId
-GET /api/stores/:storeId/inventories
-POST /api/reservations
-GET /api/users/:userId/reservations
-PATCH /api/reservations/:reservationId/cancel
-POST /api/uploads/product-image
-GET /api/seller/stores
-PATCH /api/seller/stores/:storeId
-POST /api/seller/products
-GET /api/seller/stores/:storeId/products
-PATCH /api/seller/inventories/:inventoryId
-POST /api/seller/inventories/:inventoryId/offline-sales
-GET /api/seller/reservations
-PATCH /api/seller/reservations/:reservationId/status
-GET /api/admin/users
-GET /api/admin/sellers/pending
-PATCH /api/admin/sellers/:sellerId/approval
-GET /api/admin/stores/pending
-PATCH /api/admin/stores/:storeId/approval
-GET /api/admin/keywords
-POST /api/admin/keywords
-POST /api/admin/keyword-aliases
-GET /api/admin/unmapped-searches
-PATCH /api/admin/unmapped-searches/:id/resolve
-GET /api/admin/search-logs
-GET /api/admin/search-summary
-```
+Kakao Developers 설정:
 
-`GET /api/keywords/trending`은 특정 매장의 상품이 아니라 최근 검색 로그 기반 인기 Keyword를 반환한다. 기존 `GET /api/products/trending`은 호환용으로 유지할 수 있으나, 신규 화면에서는 Keyword 기준 랭킹을 사용한다.
+- JavaScript SDK 도메인에 EC2 접속 URL을 등록한다.
+- 예: `http://13.220.26.183`
+- 카카오맵 사용 설정을 ON으로 둔다.
 
-## 13. 배포 및 발표 환경 요구사항
+## 14. 시연 목표
 
-학교 발표 환경에서는 발표 PC에 MariaDB를 직접 설치하지 않고 AWS 기반 구조를 사용하는 방향을 고려한다.
+시연은 다음 흐름을 보여주는 것을 목표로 한다.
 
-권장 발표 구조:
+1. 판매자 회원가입 및 매장/상품 등록
+2. 관리자 판매자 승인 및 매장 승인
+3. 소비자 위치/상품 기반 검색
+4. 카카오맵 기반 매장 확인
+5. 상품 예약
+6. 소비자 예약 내역 확인
+7. 판매자 예약 승인, 수령 완료, 취소 처리
+8. DB에서 예약, 재고, 상태 로그 반영 확인
+9. 관리자 검색 로그 확인
+10. 미매핑 검색어를 키워드/별칭으로 관리하는 과정 설명
 
-```text
-React 프론트엔드
-  ↓
-EC2 Node.js 백엔드
-  ↓
-RDS MariaDB
-```
-
-역할:
-
-```text
-EC2
-- Node.js Express 백엔드 실행
-- API 요청 처리
-- RDS MariaDB 접속
-
-RDS
-- MariaDB 데이터베이스 실행
-- 사용자, 매장, 상품, 재고, 예약, 검색 로그 저장
-
-React
-- 사용자 화면 제공
-- 백엔드 API 호출
-- DB에는 직접 접근하지 않음
-```
-
-보안 원칙:
-
-```text
-- 프론트엔드는 DB에 직접 접속하지 않는다.
-- RDS 3306 포트는 EC2 보안 그룹에서만 접근 가능하게 제한한다.
-- .env 파일과 DB 비밀번호는 GitHub에 올리지 않는다.
-- GitHub에는 .env.example만 올린다.
-```
-
-## 14. 발표 시연 흐름
-
-소비자 시연:
-
-```text
-1. 로그인 화면에서 소비자 선택
-2. 소비자 메인 진입
-3. "부평역 주변 버터떡" 또는 "강남역 두쫀쿠" 검색
-4. 카카오맵에 기준 위치와 주변 매장 표시
-5. 매장 카드 또는 지도 마커 선택
-6. 매장별 상품과 예약 가능 재고 확인
-7. 예약 화면 이동
-8. 수량과 방문 시간 입력
-9. 예약 완료
-```
-
-판매자 시연:
-
-```text
-1. 판매자 화면 진입
-2. 매장 정보 확인
-3. 등록 상품과 재고 확인
-4. 예약 가능 재고 수정
-5. 예약 승인 / 취소 / 수령 완료 처리
-6. 오프라인 판매량 반영
-```
-
-관리자 시연:
-
-```text
-1. 관리자 화면 진입
-2. 검색 로그 확인
-3. 미매핑 검색어 확인
-4. 기존 키워드 별칭으로 등록
-5. 새 키워드 생성
-6. 보류 / 반려 / 처리 취소 확인
-7. 유행 상품 순위 관리 흐름 설명
-```
-
-발표 강조점:
-
-```text
-- React → Node.js API → MariaDB 구조
-- 카카오맵 기반 위치 검색
-- KeywordAlias 기반 검색어 정규화
-- Inventory 기반 매장별 재고 관리
-- 예약 트랜잭션과 행 잠금을 통한 병행제어
-- ROLLBACK과 상태 로그를 통한 회복 가능성
-```
-
-## 15. 현재 구현 현황
-
-프론트엔드 구현 완료 또는 초안 구현 항목:
-
-```text
-- 역할 선택 로그인 화면
-- 소비자 메인 화면
-- 카카오맵 JavaScript API 연동
-- 지도 마커와 매장 카드 연동
-- 선택 매장 정보 패널 유지
-- 소비자 예약 화면
-- 예약 수량 및 방문 시간 검증
-- 판매자 메인 화면
-- 판매자 상품 등록 화면
-- 상품 대표 이미지 정사각형 미리보기
-- 판매자 재고 및 예약 상태 관리 UI
-- 관리자 키워드, 별칭, 미매핑 검색어 관리 UI
-- 관리자 검색 로그 UI 보강
-```
-
-문서화 완료 항목:
-
-```text
-- API 명세서
-- MariaDB 개발 가이드
-- 카카오맵 설정 가이드
-- DB 브랜치 리뷰 문서
-- 최신 요구사항 명세서
-```
-
-DB 담당자 진행 항목:
-
-```text
-- feature/database-role-schema 브랜치에서 schema.sql, seed.sql 작성 진행
-- 현재 최신 명세와 일부 차이가 있어 merge 전 보완 필요
-```
-
-## 16. 우선 구현 순서
-
-남은 구현 추천 순서:
-
-```text
-1. DB schema.sql, seed.sql을 최신 명세와 맞춤
-2. RDS 또는 로컬 MariaDB에서 schema.sql, seed.sql 실행 검증
-3. 백엔드 MariaDB 연결 설정
-4. GET /api/health 구현
-5. GET /api/products/trending 구현
-6. GET /api/search 구현
-7. POST /api/reservations 트랜잭션 구현
-8. 판매자 재고/예약 API 구현
-9. 관리자 키워드/검색 로그 API 구현
-10. 프론트 mock 데이터 제거 후 실제 API 연결
-11. EC2/RDS 발표 환경 점검
-```
