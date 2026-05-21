@@ -23,6 +23,31 @@ export function getProducts() {
   return request("/products");
 }
 
+export function getProductCategories() {
+  return request("/product-categories");
+}
+
+export function uploadProductImage(payload = {}) {
+  return request("/uploads/products", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function login(payload) {
+  return request("/auth/login", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function register(payload) {
+  return request("/auth/register", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getTrendingProducts() {
   return request("/products/trending");
 }
@@ -31,11 +56,13 @@ export function getTrendingKeywords() {
   return request("/keywords/trending");
 }
 
-export function searchStores(query, { lat, lng, radiusKm = 5 } = {}) {
+export function searchStores(query, { lat, lng, locationLabel, radiusKm = 5, userId } = {}) {
   const params = new URLSearchParams();
   params.set("query", query);
   if (lat) params.set("lat", lat);
   if (lng) params.set("lng", lng);
+  if (locationLabel) params.set("locationLabel", locationLabel);
+  if (userId) params.set("userId", userId);
   params.set("radiusKm", radiusKm);
   return request(`/search?${params.toString()}`);
 }
@@ -80,8 +107,36 @@ export function getSellerStores(sellerId) {
   return request(`/seller/stores?sellerId=${sellerId}`);
 }
 
+export function createSellerStore(payload = {}) {
+  return request("/seller/stores", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateSellerStore(storeId, payload = {}) {
+  return request(`/seller/stores/${storeId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function getSellerInventories(storeId, sellerId) {
   return request(`/seller/stores/${storeId}/inventories?sellerId=${sellerId}`);
+}
+
+export function createSellerProduct(storeId, payload = {}) {
+  return request(`/seller/stores/${storeId}/products`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateSellerProduct(storeId, productId, payload = {}) {
+  return request(`/seller/stores/${storeId}/products/${productId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function updateSellerInventory(inventoryId, payload = {}) {
@@ -99,5 +154,81 @@ export function updateSellerReservationStatus(reservationId, payload = {}) {
   return request(`/seller/reservations/${reservationId}/status`, {
     method: "PATCH",
     body: JSON.stringify(payload),
+  });
+}
+
+export function getPendingStores() {
+  return request("/admin/stores/pending");
+}
+
+export function updateStoreApproval(storeId, payload = {}) {
+  return request(`/admin/stores/${storeId}/approval`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminSellers() {
+  return request("/admin/sellers");
+}
+
+export function updateSellerApproval(sellerId, payload = {}) {
+  return request(`/admin/sellers/${sellerId}/approval`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminUsers() {
+  return request("/admin/users");
+}
+
+export function updateAdminUserStatus(userId, payload = {}) {
+  return request(`/admin/users/${userId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getAdminSearchLogs({ page = 1, limit = 20, query = "" } = {}) {
+  const params = new URLSearchParams();
+  params.set("page", page);
+  params.set("limit", limit);
+  if (query.trim()) params.set("q", query.trim());
+  return request(`/admin/search-logs?${params.toString()}`);
+}
+
+export function getAdminUnmappedSearches() {
+  return request("/admin/unmapped-searches");
+}
+
+export function getAdminKeywords() {
+  return request("/admin/keywords");
+}
+
+export function registerUnmappedAlias(unmappedId, payload = {}) {
+  return request(`/admin/unmapped-searches/${unmappedId}/register-alias`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function createKeywordFromUnmapped(unmappedId, payload = {}) {
+  return request(`/admin/unmapped-searches/${unmappedId}/create-keyword`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateUnmappedSearchStatus(unmappedId, payload = {}) {
+  return request(`/admin/unmapped-searches/${unmappedId}/status`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteUnmappedSearch(unmappedId) {
+  return request(`/admin/unmapped-searches/${unmappedId}`, {
+    method: "DELETE",
   });
 }

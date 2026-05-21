@@ -4,15 +4,32 @@ import { AlertCircle, LocateFixed, Navigation, Search, X } from "lucide-react";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import KakaoMap from "../components/KakaoMap.jsx";
 import { getNearbyStores, getTrendingKeywords, searchStores } from "../api/client.js";
+import { getCurrentUser } from "../auth/session.js";
 
 const DEFAULT_LOCATION = {
   label: "부평역",
   latitude: 37.4904,
   longitude: 126.7248,
 };
+const DEFAULT_SEARCH_RADIUS_KM = 10;
 
-function ProductThumb({ name }) {
-  return <div className="product-thumb" aria-hidden="true">{name.slice(0, 1)}</div>;
+function resolveImageSrc(imageUrl) {
+  if (!imageUrl) return "";
+  if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
+  const assetBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
+  return `${assetBaseUrl}${imageUrl.startsWith("/") ? imageUrl : `/${imageUrl}`}`;
+}
+
+function ProductThumb({ name, imageUrl }) {
+  const [hasImageError, setHasImageError] = useState(false);
+  const imageSrc = !hasImageError ? resolveImageSrc(imageUrl) : "";
+
+  return (
+    <div className="product-thumb" aria-hidden="true">
+      {imageSrc ? <img src={imageSrc} alt="" onError={() => setHasImageError(true)} /> : name.slice(0, 1)}
+    </div>
+  );
 }
 
 function getStoreMatch(store, selectedProductId) {
@@ -46,7 +63,7 @@ function toTrendingKeywordModel(keyword) {
     name: keyword.keyword_name,
     searchCount: keyword.search_count ?? 0,
     rankBasis: keyword.rank_basis,
-    trendBadge: keyword.rank_basis === "SEARCH_LOG_7D" ? `검색 ${keyword.search_count}회` : "추천",
+    trendBadge: keyword.rank_basis === "SEARCH_LOG_7D" ? `${keyword.search_count}회` : "추천",
   };
 }
 
@@ -71,7 +88,8 @@ function toStoreModel(store) {
         : `${store.distance_km.toFixed(1)}km`,
     latitude: store.latitude,
     longitude: store.longitude,
-    openingHours: "매장 정보 확인 필요",
+    phone: store.phone ?? "",
+    openingHours: store.opening_hours ?? "매장 정보 확인 필요",
     products: [product],
     inventories: [
       {
@@ -84,6 +102,25 @@ function toStoreModel(store) {
       },
     ],
   };
+}
+
+function toStoreModels(storeRows) {
+  const storeMap = new Map();
+
+  storeRows.forEach((storeRow) => {
+    const nextStore = toStoreModel(storeRow);
+    const existingStore = storeMap.get(nextStore.id);
+
+    if (!existingStore) {
+      storeMap.set(nextStore.id, nextStore);
+      return;
+    }
+
+    existingStore.products.push(...nextStore.products);
+    existingStore.inventories.push(...nextStore.inventories);
+  });
+
+  return Array.from(storeMap.values());
 }
 
 function ConsumerHomePage() {
@@ -104,6 +141,7 @@ function ConsumerHomePage() {
     productLabel: "전체 상품",
     source: "기본 위치",
   });
+  const currentUser = getCurrentUser();
 
   const filteredProducts = useMemo(() => {
     const normalizedQuery = query.trim().toLowerCase();
@@ -156,7 +194,7 @@ function ConsumerHomePage() {
   }, []);
 
   const applyStoreResult = useCallback((result, sourceLabel, productLabel = "전체 상품", nextActiveProductId = null) => {
-    const nextStores = result.stores.map(toStoreModel);
+    const nextStores = toStoreModels(result.stores);
 
     setNearbyStores(nextStores);
     setSelectedProductId(nextActiveProductId);
@@ -180,7 +218,7 @@ function ConsumerHomePage() {
         lat: location.latitude,
         lng: location.longitude,
         productId,
-        radiusKm: 5,
+        radiusKm: DEFAULT_SEARCH_RADIUS_KM,
       });
       const productLabel = productId ? products.find((product) => product.id === productId)?.name ?? "선택 상품" : "전체 상품";
       applyStoreResult({
@@ -218,10 +256,14 @@ function ConsumerHomePage() {
       const result = await searchStores(searchQuery, {
         lat: baseLocation.latitude,
         lng: baseLocation.longitude,
-        radiusKm: 5,
+        locationLabel: baseLocation.label ?? "내 위치",
+        radiusKm: DEFAULT_SEARCH_RADIUS_KM,
+        userId: currentUser?.user_id,
       });
-      const activeProduct = result.stores[0]?.inventory?.product_id ?? null;
-      const productLabel = result.keyword?.keyword_name ?? result.product?.name ?? "전체 상품";
+      // Keyword/category searches are name-based, so product_id filtering would hide
+      // the same product name registered as different product rows per store.
+      const activeProduct = null;
+      const productLabel = result.keyword?.keyword_name ?? result.product?.name ?? result.category?.name ?? "전체 상품";
       applyStoreResult(result, result.location ? "검색어 위치" : "기본 위치 + 상품 검색", productLabel, activeProduct);
     } catch (error) {
       setNearbyStores([]);
@@ -231,7 +273,7 @@ function ConsumerHomePage() {
     } finally {
       setIsSearching(false);
     }
-  }, [applyStoreResult, loadNearbyStores, userLocation]);
+  }, [applyStoreResult, currentUser?.user_id, loadNearbyStores, userLocation]);
 
   useEffect(() => {
     getTrendingKeywords()
@@ -273,6 +315,7 @@ function ConsumerHomePage() {
     navigator.geolocation.getCurrentPosition(
       (position) => {
         const nextLocation = {
+          label: "내 위치",
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
         };
@@ -330,7 +373,7 @@ function ConsumerHomePage() {
 
           <section>
             <div className="section-title-row">
-              <h2>최근 인기 검색어</h2>
+              <h2>최근 7일 인기 검색어</h2>
               {activeProduct && (
                 <button className="clear-filter-button" onClick={clearProductFilter} type="button">
                   <X size={14} /> 전체
@@ -360,7 +403,7 @@ function ConsumerHomePage() {
             <div className="store-list">
               {visibleStores.length === 0 && (
                 <div className="warning-message">
-                  <AlertCircle size={18} /> 기준 위치 주변 5km 안에 예약 가능한 매장이 없습니다.
+                  <AlertCircle size={18} /> 기준 위치 주변 {DEFAULT_SEARCH_RADIUS_KM}km 안에 예약 가능한 매장이 없습니다.
                 </div>
               )}
               {visibleStores.map((store) => {
@@ -373,7 +416,6 @@ function ConsumerHomePage() {
                     onClick={() => handleSelectStore(store.id)}
                     type="button"
                   >
-                    <ProductThumb name={product?.name ?? "상"} />
                     <div>
                       <strong>{store.name}</strong>
                       <span>{store.displayDistance} · {product?.name}</span>
@@ -396,19 +438,27 @@ function ConsumerHomePage() {
                   <span><LocateFixed size={14} /> {selectedStore.displayDistance}</span>
                 </div>
                 <div className="selected-store-product">
-                  <ProductThumb name={selectedProduct.name} />
                   <div>
                     <strong>{selectedProduct.name}</strong>
                     <span>예약 가능 {selectedInventory.reservableStock}개</span>
                   </div>
                 </div>
                 <span className="selected-store-address">{selectedStore.address}</span>
-                <Link
-                  className="primary-button small"
-                  to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct.id}&inventoryId=${selectedInventory.inventoryId}`}
-                >
-                  이 매장에서 예약하기
-                </Link>
+                <div className="selected-store-meta">
+                  <span>영업시간 {selectedStore.openingHours}</span>
+                  {selectedStore.phone && <span>전화 {selectedStore.phone}</span>}
+                </div>
+                <div className="result-actions compact-actions">
+                  <Link className="ghost-button small" to={`/consumer/stores/${selectedStore.id}`}>
+                    가게 정보
+                  </Link>
+                  <Link
+                    className="primary-button small"
+                    to={`/consumer/reservations/new?storeId=${selectedStore.id}&productId=${selectedProduct.id}&inventoryId=${selectedInventory.inventoryId}`}
+                  >
+                    이 매장에서 예약하기
+                  </Link>
+                </div>
               </article>
             </div>
           )}

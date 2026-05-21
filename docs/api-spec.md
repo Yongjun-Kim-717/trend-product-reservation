@@ -2,7 +2,7 @@
 
 Base URL: `http://localhost:4000/api`
 
-최종 수정일: 2026-05-19
+최종 수정일: 2026-05-20
 
 ## 1. 공통 규칙
 
@@ -65,7 +65,71 @@ Response:
 }
 ```
 
-## 3. 통합 검색 API
+## 3. 인증 API
+
+현재 프로토타입은 프론트엔드 `localStorage`에 `currentUser`를 저장하고, 소비자/판매자 화면에서 해당 사용자의 `user_id`를 API에 전달한다. 운영 수준의 JWT/세션 인증은 추후 전환 대상으로 둔다.
+
+주의: 현재 seed 데이터의 `password_hash`는 실제 해시가 아니라 `pw_1` 같은 시연용 문자열이다. 발표 프로토타입에서는 같은 방식으로 비교하지만, 최종 운영 구조에서는 bcrypt/argon2 해시와 서버 세션 또는 JWT로 교체해야 한다.
+
+### POST /auth/login
+
+Request:
+
+```json
+{
+  "login_id": "consumer1",
+  "password": "pw_1"
+}
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "user": {
+      "user_id": 2,
+      "role": "CONSUMER",
+      "login_id": "consumer1",
+      "name": "강태민",
+      "phone": "010-0000-0001",
+      "status": "ACTIVE"
+    },
+    "session": {
+      "token": "demo-2-..."
+    }
+  },
+  "message": "success"
+}
+```
+
+시연 계정:
+
+```text
+소비자: consumer1 / pw_1
+판매자: seller1 / pw_6
+관리자: admin1 / pw_11
+```
+
+### POST /auth/register
+
+소비자와 판매자 계정만 생성한다. 관리자는 DB seed 또는 관리자 화면에서 별도 관리한다.
+
+Request:
+
+```json
+{
+  "role": "SELLER",
+  "login_id": "seller_new",
+  "password": "pw_100",
+  "name": "신규 판매자",
+  "phone": "010-0000-0100"
+}
+```
+
+Response: `/auth/login`과 동일한 `user`, `session` 구조를 반환한다.
+
+## 4. 통합 검색 API
 
 ### GET /search?query=부평역%20주변%20버터떡&lat=37.4904&lng=126.7248&radiusKm=5
 
@@ -92,11 +156,12 @@ Response:
 5. 캐시에 없으면 Kakao Local REST API 호출
 6. 위치 좌표 저장 또는 재사용
 7. 상품 키워드를 keyword_aliases.alias_normalized로 매핑
-8. 매핑 성공 시 keyword_id 기준 상품 조회
-9. 매핑 실패 시 unmapped_searches 저장 또는 count 증가
-10. 기준 좌표 주변 매장 후보 조회
-11. inventories와 products 조인
-12. 거리 계산 및 거리순 정렬
+8. 상품 키워드 매핑이 없으면 product_categories 기준 카테고리어도 매핑한다.
+9. 매핑 성공 시 keyword_id/product/category 기준 상품 조회
+10. 매핑 실패 시 unmapped_searches 저장 또는 count 증가
+11. 기준 좌표 주변 매장 후보 조회
+12. inventories와 products 조인
+13. 거리 계산 및 거리순 정렬
 13. search_logs 저장
 14. 프론트에 검색 기준 위치, 키워드, 매장 목록 반환
 ```
@@ -201,6 +266,25 @@ Response:
 ### GET /products
 
 상품 목록을 조회한다.
+
+### GET /product-categories
+
+상품 등록 화면에서 사용할 활성 카테고리 목록을 조회한다. 카테고리는 판매자가 임의로 새로 만드는 값이 아니라 관리자 또는 DB가 관리하는 기준 데이터로 본다.
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "category_id": 1,
+      "name": "디저트",
+      "status": "ACTIVE"
+    }
+  ],
+  "message": "success"
+}
+```
 
 Response:
 
@@ -326,19 +410,121 @@ Response:
 
 ## 6. Seller API
 
-초기 구현에서는 로그인/JWT가 완성되기 전이므로 `sellerId` 또는 `seller_id`를 임시로 전달한다. 모든 판매자 API는 요청한 판매자가 소유한 매장/재고/예약만 조회하거나 수정해야 한다.
+현재 구현에서는 로그인 후 프론트엔드가 `currentUser.user_id`를 읽어 `sellerId` 또는 `seller_id`로 전달한다. 백엔드는 이 사용자 ID로 `seller_profiles.seller_id`를 조회한 뒤, 해당 판매자 프로필이 소유한 매장/재고/예약만 조회하거나 수정한다. 추후 JWT 인증으로 전환하면 query/body의 판매자 ID 대신 토큰의 사용자 ID를 기준으로 권한을 판정한다.
 
 ### GET /seller/stores?sellerId=2
 
 판매자가 소유한 매장 목록을 조회한다.
 
+### POST /seller/stores
+
+판매자가 새 매장을 등록한다. 판매자 한 명은 여러 매장을 등록할 수 있으며, 새 매장은 기본적으로 `PENDING` 상태로 저장된다. 주소 좌표는 백엔드에서 Kakao Local REST API로 조회하여 `stores.latitude`, `stores.longitude`에 저장한다.
+
+Request:
+
+```json
+{
+  "seller_id": 5,
+  "name": "부평 버터떡 팝업스토어",
+  "address": "인천 부평구 부평대로 1",
+  "phone": "032-000-0000",
+  "opening_hours": "10:00-20:00"
+}
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "store_id": 6,
+    "seller_id": 1,
+    "name": "부평 버터떡 팝업스토어",
+    "address": "인천 부평구 부평대로 1",
+    "latitude": 37.4904,
+    "longitude": 126.7248,
+    "phone": "032-000-0000",
+    "opening_hours": "10:00-20:00",
+    "approval_status": "PENDING"
+  },
+  "message": "success"
+}
+```
+
+### PATCH /seller/stores/:storeId
+
+판매자가 본인 소유 매장 정보를 수정한다. 매장명 또는 주소가 바뀌면 좌표를 다시 조회해 저장한다.
+
+Request:
+
+```json
+{
+  "seller_id": 5,
+  "name": "부평 버터떡 팝업스토어",
+  "address": "인천 부평구 부평대로 10",
+  "phone": "032-000-0001",
+  "opening_hours": "11:00-21:00"
+}
+```
+
 ### GET /seller/stores/:storeId/inventories?sellerId=2
 
 판매자 매장의 상품별 재고를 조회한다.
 
+### POST /seller/stores/:storeId/products
+
+판매자가 선택한 매장에 상품을 등록한다. 이 API는 `products`와 `inventories`를 같은 트랜잭션에서 생성한다.
+
+Request:
+
+```json
+{
+  "seller_id": 5,
+  "name": "버터떡",
+  "category_id": 1,
+  "description": "버터 풍미가 강한 떡",
+  "price": 3500,
+  "image_url": "/uploads/products/butter-rice-cake.png",
+  "total_stock": 100,
+  "reservable_stock": 60
+}
+```
+
+처리 흐름:
+
+```text
+1. currentUser.user_id로 seller_profiles.seller_id를 조회한다.
+2. storeId가 해당 판매자 프로필 소유 매장인지 확인한다.
+3. 같은 매장에 동일 상품명이 이미 등록되어 있으면 409를 반환한다.
+4. product_categories에서 활성 카테고리인지 확인한다.
+5. products에 상품 정보를 생성한다.
+6. inventories에 store_id + product_id + 재고 정보를 생성한다. 이때 reserved_stock은 0으로 시작한다.
+7. 모든 작업은 같은 트랜잭션에서 처리한다.
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "inventory_id": 13,
+    "store_id": 7,
+    "product_id": 8,
+    "product_name": "버터떡",
+    "category_name": "디저트",
+    "price": 3500,
+    "image_url": "/uploads/products/butter-rice-cake.png",
+    "total_stock": 100,
+    "reservable_stock": 60,
+    "reserved_stock": 0
+  },
+  "message": "success"
+}
+```
+
 ### PATCH /seller/inventories/:inventoryId
 
-판매자가 상품 재고를 수정한다. `reserved_stock`을 고려하여 `reservable_stock <= total_stock - reserved_stock` 조건을 만족해야 한다.
+판매자가 상품 재고를 수정한다. 프론트엔드는 숫자 입력 변경만으로 저장하지 않고, `수정 확인` 버튼을 눌렀을 때만 이 API를 호출한다. `reserved_stock`을 고려하여 `reservable_stock <= total_stock - reserved_stock` 조건을 만족해야 한다.
 
 Request:
 
@@ -421,13 +607,14 @@ Success:
 ```text
 1. START TRANSACTION을 시작한다.
 2. inventories 행을 SELECT ... FOR UPDATE로 잠근다.
-3. reservable_stock >= quantity인지 1차 확인한다.
-4. 조건부 UPDATE로 reservable_stock 감소와 reserved_stock 증가를 동시에 처리한다.
-5. UPDATE affectedRows가 1인지 확인한다. 0이면 재고 부족으로 판단한다.
-6. reservations 행을 PENDING 상태로 생성한다.
-7. reservation_status_logs에 최초 상태 로그를 기록한다.
-8. 모든 작업이 성공하면 COMMIT한다.
-9. 중간에 하나라도 실패하면 ROLLBACK한다.
+3. 매장 opening_hours가 파싱 가능한 형식이면 visit_time이 영업시간 안인지 확인한다.
+4. reservable_stock >= quantity인지 1차 확인한다.
+5. 조건부 UPDATE로 reservable_stock 감소와 reserved_stock 증가를 동시에 처리한다.
+6. UPDATE affectedRows가 1인지 확인한다. 0이면 재고 부족으로 판단한다.
+7. reservations 행을 PENDING 상태로 생성한다.
+8. reservation_status_logs에 최초 상태 로그를 기록한다.
+9. 모든 작업이 성공하면 COMMIT한다.
+10. 중간에 하나라도 실패하면 ROLLBACK한다.
 ```
 
 조건부 재고 차감 SQL 예시:
@@ -595,9 +782,31 @@ Request:
 이미 예약된 reserved_stock은 오프라인 판매로 차감할 수 없다.
 ```
 
-### GET /seller/reservations
+### GET /seller/stores/:storeId/reservations?sellerId=8
 
-판매자 매장의 예약 목록을 조회한다.
+선택한 판매자 매장의 예약 목록을 조회한다.
+
+Response:
+
+```json
+{
+  "data": [
+    {
+      "reservation_id": 8,
+      "user_id": 1,
+      "customer_name": "김용준",
+      "inventory_id": 14,
+      "quantity": 1,
+      "status": "PENDING",
+      "visit_time": "2026-05-21T06:00:00.000Z",
+      "request_note": "방문 전 연락 부탁드립니다.",
+      "product_name": "두쫀쿠",
+      "store_name": "두쫀쿠마스터"
+    }
+  ],
+  "message": "success"
+}
+```
 
 ### PATCH /seller/reservations/:reservationId/status
 
@@ -607,6 +816,7 @@ Request:
 
 ```json
 {
+  "seller_id": 8,
   "status": "APPROVED"
 }
 ```
@@ -627,7 +837,7 @@ APPROVED -> CANCELED
 - 현재 상태를 조회한 뒤 허용된 상태 전이인지 검증한다.
 - CANCELED, PICKED_UP 상태는 최종 상태로 보고 되돌리지 않는다.
 - CANCELED 처리 시 예약 취소와 동일하게 재고를 복구한다.
-- PICKED_UP 처리 시 reserved_stock을 quantity만큼 감소시킨다.
+- PICKED_UP 처리 시 reserved_stock과 total_stock을 quantity만큼 감소시킨다.
 - 모든 상태 변경은 reservation_status_logs에 기록한다.
 ```
 
@@ -662,6 +872,8 @@ Response:
 - jpg, jpeg, png, webp만 허용한다.
 - 파일 크기는 초기 구현 기준 5MB 이하로 제한한다.
 - DB에는 파일 바이너리가 아니라 image_url만 저장한다.
+- 현재 로컬 프로토타입은 /api/uploads/products로 이미지를 서버 public/uploads/products에 저장한다.
+- AWS 전환 시 같은 image_url 정책을 유지하고 저장소만 S3 같은 객체 스토리지로 바꿀 수 있다.
 ```
 
 ## 9. Admin API
@@ -690,9 +902,71 @@ Request:
 
 승인 대기 매장 목록을 조회한다.
 
+Response:
+
+```json
+{
+  "data": [
+    {
+      "store_id": 6,
+      "seller_id": 4,
+      "name": "두쫀쿠마스터",
+      "address": "인천광역시 미추홀구 인하로77번길",
+      "latitude": 37.4522563,
+      "longitude": 126.6574571,
+      "phone": "032-1111-1111",
+      "opening_hours": "10:00~20:00",
+      "approval_status": "PENDING",
+      "business_name": "김용준 판매자",
+      "representative_name": "김용준",
+      "contact_phone": "01000000000",
+      "user_id": 8,
+      "login_id": "seller_login",
+      "seller_name": "김용준"
+    }
+  ],
+  "message": "success"
+}
+```
+
 ### PATCH /admin/stores/:storeId/approval
 
 매장 승인 상태를 변경한다.
+
+Request:
+
+```json
+{
+  "approval_status": "APPROVED"
+}
+```
+
+검증 규칙:
+
+```text
+- approval_status는 APPROVED 또는 REJECTED만 허용한다.
+- 현재 PENDING 상태인 매장만 승인/반려 처리할 수 있다.
+- APPROVED 처리된 매장만 소비자 검색 결과에 노출된다.
+- REJECTED 처리된 매장은 승인 대기 목록에서 제외되고 소비자 검색에도 노출되지 않는다.
+```
+
+Response:
+
+```json
+{
+  "data": {
+    "store_id": 6,
+    "seller_id": 4,
+    "name": "두쫀쿠마스터",
+    "address": "인천광역시 미추홀구 인하로77번길",
+    "latitude": 37.4522563,
+    "longitude": 126.6574571,
+    "approval_status": "APPROVED",
+    "seller_name": "김용준"
+  },
+  "message": "success"
+}
+```
 
 ### GET /admin/keywords
 
@@ -843,7 +1117,7 @@ Response:
 
 ## 10. 인증과 권한 정책
 
-초기 개발에서는 로그인 기능이 완성되기 전이므로 요청 body 또는 query의 `user_id`를 임시로 사용할 수 있다. 단, API 명세와 코드 구조는 최종적으로 JWT 기반 인증으로 전환하기 쉽게 작성한다.
+현재 프로토타입은 `/auth/login` 또는 `/auth/register` 응답의 `user`를 프론트엔드 `currentUser`로 보관하고, 해당 `user_id`를 예약/판매자 API에 전달한다. 단, API 명세와 코드 구조는 최종적으로 JWT 기반 인증으로 전환하기 쉽게 작성한다.
 
 역할별 접근 규칙:
 

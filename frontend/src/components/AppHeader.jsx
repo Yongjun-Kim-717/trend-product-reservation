@@ -1,15 +1,39 @@
-﻿import { Link, NavLink } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Link, NavLink, useNavigate } from "react-router-dom";
+import { clearCurrentUser, getCurrentUser, getRoleHome } from "../auth/session.js";
 
 function AppHeader({ role, children }) {
+  const navigate = useNavigate();
+  const [currentUser, setCurrentUserState] = useState(() => getCurrentUser());
+
+  useEffect(() => {
+    const syncUser = () => setCurrentUserState(getCurrentUser());
+    window.addEventListener("authchange", syncUser);
+    window.addEventListener("storage", syncUser);
+    return () => {
+      window.removeEventListener("authchange", syncUser);
+      window.removeEventListener("storage", syncUser);
+    };
+  }, []);
+
+  const handleLogout = () => {
+    clearCurrentUser();
+    navigate("/login", { replace: true });
+  };
+
+  const homePath = currentUser ? getRoleHome(currentUser.role) : "/login";
+
   return (
     <header className="app-header">
-      <Link className="brand" to="/login">
+      <Link className="brand" to={homePath}>
         <span className="brand-mark">T</span>
         <span>트렌드 상품 예약</span>
       </Link>
       <div className="header-actions">
         {children}
+        {currentUser && <span className="current-user">{currentUser.name}</span>}
         {role && <span className="role-badge">{role}</span>}
+        {currentUser && <button className="link-button compact-button" onClick={handleLogout} type="button">로그아웃</button>}
       </div>
     </header>
   );
@@ -18,9 +42,11 @@ function AppHeader({ role, children }) {
 export function ConsumerHeader({ onRequestLocation, isLocating }) {
   return (
     <AppHeader role="소비자">
-      <button className="ghost-button" onClick={onRequestLocation} disabled={isLocating} type="button">
-        {isLocating ? "위치 확인 중" : "내 위치"}
-      </button>
+      {onRequestLocation && (
+        <button className="ghost-button" onClick={onRequestLocation} disabled={isLocating} type="button">
+          {isLocating ? "위치 확인 중" : "내 위치"}
+        </button>
+      )}
       <NavLink className="text-link" to="/consumer/reservations">내 예약</NavLink>
     </AppHeader>
   );

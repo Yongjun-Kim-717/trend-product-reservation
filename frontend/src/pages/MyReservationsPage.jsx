@@ -1,10 +1,9 @@
 import { useEffect, useState } from "react";
-import { AlertCircle, CalendarClock, RotateCcw } from "lucide-react";
-import { Link } from "react-router-dom";
+import { AlertCircle, CalendarClock, MapPin, RotateCcw } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import { cancelReservation, getUserReservations } from "../api/client.js";
-
-const DEMO_USER_ID = 2;
+import { getCurrentUser } from "../auth/session.js";
 
 function formatDateTime(value) {
   if (!value) return "방문 시간 미정";
@@ -19,6 +18,8 @@ const statusView = {
 };
 
 function MyReservationsPage() {
+  const navigate = useNavigate();
+  const [currentUser] = useState(() => getCurrentUser());
   const [reservations, setReservations] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
@@ -26,9 +27,14 @@ function MyReservationsPage() {
   const [cancelingId, setCancelingId] = useState(null);
 
   useEffect(() => {
+    if (!currentUser || currentUser.role !== "CONSUMER") {
+      navigate("/login", { replace: true });
+      return undefined;
+    }
+
     let cancelled = false;
 
-    getUserReservations(DEMO_USER_ID)
+    getUserReservations(currentUser.user_id)
       .then((rows) => {
         if (!cancelled) {
           setReservations(rows);
@@ -48,7 +54,7 @@ function MyReservationsPage() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [currentUser, navigate]);
 
   const handleCancelReservation = async (reservation) => {
     const canCancel = ["PENDING", "APPROVED"].includes(reservation.status);
@@ -59,7 +65,7 @@ function MyReservationsPage() {
     setCancelingId(reservation.reservation_id);
 
     try {
-      const result = await cancelReservation(reservation.reservation_id, { user_id: DEMO_USER_ID });
+      const result = await cancelReservation(reservation.reservation_id, { user_id: currentUser.user_id });
       setReservations((currentRows) =>
         currentRows.map((item) =>
           item.reservation_id === reservation.reservation_id
@@ -67,7 +73,7 @@ function MyReservationsPage() {
             : item
         )
       );
-      setActionMessage(`${reservation.product_name} 예약이 취소되었습니다.`);
+      setActionMessage(`${reservation.product_name} 예약을 취소했습니다.`);
     } catch (error) {
       setErrorMessage(error.message);
     } finally {
@@ -112,6 +118,9 @@ function MyReservationsPage() {
                 <span className={`status-chip ${status.className}`}>{status.label}</span>
                 <div className="seller-action-row">
                   <span className="stock-pill">{reservation.quantity}개</span>
+                  <Link className="ghost-button" to={`/consumer/stores/${reservation.store_id}`}>
+                    <MapPin size={16} /> 가게 정보
+                  </Link>
                   {canCancel ? (
                     <button
                       className="danger-button"

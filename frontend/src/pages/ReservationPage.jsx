@@ -1,12 +1,40 @@
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AlertCircle, CheckCircle2, Minus, Plus } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ConsumerHeader } from "../components/AppHeader.jsx";
 import { createReservation, getStore, getStoreInventories } from "../api/client.js";
+import { getCurrentUser } from "../auth/session.js";
 
 function toDateTimeLocalValue(date) {
   const offsetDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return offsetDate.toISOString().slice(0, 16);
+}
+
+function resolveImageSrc(imageUrl) {
+  if (!imageUrl) return "";
+  if (/^https?:\/\//i.test(imageUrl)) return imageUrl;
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
+  const assetBaseUrl = apiBaseUrl.replace(/\/api\/?$/, "");
+  return `${assetBaseUrl}${imageUrl.startsWith("/") ? imageUrl : `/${imageUrl}`}`;
+}
+
+function parseOpeningHours(openingHours) {
+  const match = String(openingHours ?? "").match(/(\d{1,2}):(\d{2})\s*(?:~|-|–|—|부터|to)\s*(\d{1,2}):(\d{2})/i);
+  if (!match) return null;
+  const openMinutes = Number(match[1]) * 60 + Number(match[2]);
+  const closeMinutes = Number(match[3]) * 60 + Number(match[4]);
+  return { openMinutes, closeMinutes };
+}
+
+function isVisitTimeWithinOpeningHours(visitTime, openingHours) {
+  const parsedHours = parseOpeningHours(openingHours);
+  const match = String(visitTime ?? "").match(/T(\d{2}):(\d{2})/);
+  if (!parsedHours || !match) return true;
+
+  const visitMinutes = Number(match[1]) * 60 + Number(match[2]);
+  return parsedHours.closeMinutes > parsedHours.openMinutes
+    ? visitMinutes >= parsedHours.openMinutes && visitMinutes <= parsedHours.closeMinutes
+    : visitMinutes >= parsedHours.openMinutes || visitMinutes <= parsedHours.closeMinutes;
 }
 
 function toInventoryModel(row) {
@@ -23,6 +51,8 @@ function toInventoryModel(row) {
 }
 
 function ReservationPage() {
+  const navigate = useNavigate();
+  const [currentUser] = useState(() => getCurrentUser());
   const [searchParams] = useSearchParams();
   const requestedStoreId = searchParams.get("storeId");
   const requestedProductId = searchParams.get("productId");
@@ -39,6 +69,11 @@ function ReservationPage() {
   const [reservationResult, setReservationResult] = useState(null);
 
   useEffect(() => {
+    if (!currentUser || currentUser.role !== "CONSUMER") {
+      navigate("/login", { replace: true });
+      return undefined;
+    }
+
     let cancelled = false;
 
     async function loadReservationTarget() {
@@ -76,7 +111,7 @@ function ReservationPage() {
     return () => {
       cancelled = true;
     };
-  }, [requestedInventoryId, requestedProductId, requestedStoreId]);
+  }, [currentUser, navigate, requestedInventoryId, requestedProductId, requestedStoreId]);
 
   const product = inventory
     ? {
@@ -89,6 +124,7 @@ function ReservationPage() {
 
   const isSoldOut = !inventory || inventory.reservableStock <= 0;
   const remainingAfterReservation = inventory ? Math.max(inventory.reservableStock - quantity, 0) : 0;
+  const productImageSrc = resolveImageSrc(inventory?.imageUrl);
 
   const increase = () => setQuantity((current) => Math.min(current + 1, inventory.reservableStock));
   const decrease = () => setQuantity((current) => Math.max(current - 1, isSoldOut ? 0 : 1));
@@ -128,9 +164,19 @@ function ReservationPage() {
       return;
     }
 
+    if (!isVisitTimeWithinOpeningHours(visitTime, store.opening_hours)) {
+      setFormError(`방문 예정 시간은 매장 영업시간(${store.opening_hours}) 안에서만 선택할 수 있습니다.`);
+      return;
+    }
+
     try {
+      if (!currentUser) {
+        setFormError("로그인이 필요합니다.");
+        return;
+      }
+
       const result = await createReservation({
-        user_id: 2,
+        user_id: currentUser.user_id,
         inventory_id: inventory.inventoryId,
         quantity,
         visit_time: visitTime,
@@ -170,7 +216,9 @@ function ReservationPage() {
           )}
           {product && store && inventory && (
             <>
-              <div className="product-image-placeholder">{product.name}</div>
+              <div className="product-image-placeholder product-detail-image">
+                {productImageSrc ? <img src={productImageSrc} alt={product.name} /> : product.name}
+              </div>
               <div>
                 <p className="eyebrow">{product.category}</p>
                 <h1>{product.name}</h1>
