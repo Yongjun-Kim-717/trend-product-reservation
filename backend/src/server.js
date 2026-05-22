@@ -11,8 +11,13 @@ dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
-const jwtSecret = process.env.JWT_SECRET ?? "trend-product-demo-secret";
+const jwtSecret = process.env.JWT_SECRET;
 const jwtExpiresIn = process.env.JWT_EXPIRES_IN ?? "8h";
+
+if (!jwtSecret) {
+  throw new Error("JWT_SECRET environment variable is required.");
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, "..", "public");

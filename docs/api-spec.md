@@ -71,6 +71,8 @@ Response:
 
 상세한 JWT 작동 원리와 역할별 권한 검증 흐름은 [JWT 인증 설계 문서](./authentication-jwt.md)를 기준으로 한다.
 
+백엔드는 `JWT_SECRET` 환경변수가 없으면 실행되지 않는다. 실제 비밀키는 GitHub에 커밋하지 않고 EC2의 `backend/.env`에만 저장한다.
+
 인증 헤더:
 
 ```http

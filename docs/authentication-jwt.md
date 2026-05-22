@@ -74,6 +74,7 @@ Header.Payload.Signature
 - JWT는 기본적으로 암호화가 아니라 서명 방식이다.
 - Payload 내용은 디코딩될 수 있으므로 비밀번호 같은 민감 정보는 넣지 않는다.
 - 서버의 `JWT_SECRET`을 모르면 유효한 Signature를 만들 수 없기 때문에 토큰 위조를 막을 수 있다.
+- `JWT_SECRET`은 반드시 백엔드 `.env`에 설정해야 하며, 값이 없으면 서버가 시작되지 않는다.
 
 ## 5. 로그인 처리 흐름
 
@@ -352,4 +353,3 @@ users.status = 'ACTIVE'
 - HttpOnly Secure Cookie 기반 저장 검토
 - 토큰 블랙리스트 또는 세션 버전 관리
 - HTTPS 도메인 적용
-
