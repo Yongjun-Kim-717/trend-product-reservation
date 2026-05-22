@@ -69,6 +69,8 @@ Response:
 
 현재 프로토타입은 로그인 성공 시 백엔드가 JWT 토큰을 발급한다. 프론트엔드는 토큰을 탭 단위 `sessionStorage`에 저장하고, 인증이 필요한 API 요청마다 `Authorization` 헤더를 전송한다.
 
+상세한 JWT 작동 원리와 역할별 권한 검증 흐름은 [JWT 인증 설계 문서](./authentication-jwt.md)를 기준으로 한다.
+
 인증 헤더:
 
 ```http

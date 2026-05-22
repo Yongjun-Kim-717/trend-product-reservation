@@ -331,6 +331,9 @@
 - GitHub에는 `.env.example`만 관리한다.
 - 카카오 JavaScript 키는 프론트 빌드 환경변수에 저장한다.
 - 카카오 REST API 키와 DB 접속 정보는 백엔드 `.env`에 저장한다.
+- JWT 인증에 사용하는 `JWT_SECRET`, `JWT_EXPIRES_IN`은 백엔드 `.env`에 저장한다.
+- 로그인 토큰은 프론트엔드 탭별 `sessionStorage`에 저장하여 소비자/판매자/관리자 계정을 같은 브라우저에서 동시에 시연할 수 있어야 한다.
+- 백엔드는 주요 API 요청에서 `Authorization: Bearer <token>` 헤더를 검증하고, 토큰의 `user_id`, `role`을 기준으로 권한을 판단한다.
 
 Kakao Developers 설정:
 
@@ -352,4 +355,3 @@ Kakao Developers 설정:
 8. DB에서 예약, 재고, 상태 로그 반영 확인
 9. 관리자 검색 로그 확인
 10. 미매핑 검색어를 키워드/별칭으로 관리하는 과정 설명
-
