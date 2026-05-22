@@ -4,12 +4,15 @@ import dotenv from "dotenv";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import jwt from "jsonwebtoken";
 import { pool } from "./config/db.js";
 
 dotenv.config();
 
 const app = express();
 const port = Number(process.env.PORT ?? 4000);
+const jwtSecret = process.env.JWT_SECRET ?? "trend-product-demo-secret";
+const jwtExpiresIn = process.env.JWT_EXPIRES_IN ?? "8h";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.resolve(__dirname, "..", "public");
@@ -41,6 +44,98 @@ function toUserResponse(row) {
     name: row.name,
     phone: row.phone,
     status: row.status,
+  };
+}
+
+function issueAuthSession(row) {
+  const user = toUserResponse(row);
+  const token = jwt.sign(
+    {
+      user_id: user.user_id,
+      role: user.role,
+      login_id: user.login_id,
+      name: user.name,
+      status: user.status,
+    },
+    jwtSecret,
+    { expiresIn: jwtExpiresIn }
+  );
+
+  return {
+    user,
+    session: {
+      token,
+      token_type: "Bearer",
+      expires_in: jwtExpiresIn,
+    },
+  };
+}
+
+function getBearerToken(req) {
+  const header = String(req.headers.authorization ?? "");
+  const match = header.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1] : null;
+}
+
+async function loadActiveUserFromToken(token) {
+  const decoded = jwt.verify(token, jwtSecret);
+  const [rows] = await pool.query(
+    `SELECT user_id, role, login_id, name, phone, status
+       FROM users
+      WHERE user_id = ?
+      LIMIT 1`,
+    [decoded.user_id]
+  );
+
+  if (rows.length === 0 || rows[0].status !== "ACTIVE") {
+    return null;
+  }
+
+  return toUserResponse(rows[0]);
+}
+
+async function authenticateToken(req, res, next) {
+  const token = getBearerToken(req);
+
+  if (!token) {
+    return res.status(401).json({ message: "로그인이 필요합니다.", code: "AUTH_REQUIRED" });
+  }
+
+  try {
+    req.user = await loadActiveUserFromToken(token);
+    if (!req.user) {
+      return res.status(403).json({ message: "사용할 수 없는 계정입니다.", code: "USER_NOT_ACTIVE" });
+    }
+    return next();
+  } catch {
+    return res.status(401).json({ message: "로그인 정보가 만료되었거나 유효하지 않습니다.", code: "INVALID_AUTH_TOKEN" });
+  }
+}
+
+async function optionalAuthenticateToken(req, _res, next) {
+  const token = getBearerToken(req);
+  if (!token) return next();
+
+  try {
+    req.user = await loadActiveUserFromToken(token);
+  } catch {
+    req.user = null;
+  }
+
+  return next();
+}
+
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "로그인이 필요합니다.", code: "AUTH_REQUIRED" });
+    }
+
+    if (roles.length > 0 && !roles.includes(req.user.role)) {
+      return res.status(403).json({ message: "요청 권한이 없습니다.", code: "FORBIDDEN_ROLE" });
+    }
+
+    return next();
   };
 }
 
@@ -630,12 +725,7 @@ app.post("/api/auth/login", async (req, res) => {
     return res.status(403).json({ message: "정지된 계정입니다.", code: "USER_SUSPENDED" });
   }
 
-  res.json(ok({
-    user: toUserResponse(rows[0]),
-    session: {
-      token: `demo-${rows[0].user_id}-${Date.now()}`,
-    },
-  }));
+  res.json(ok(issueAuthSession(rows[0])));
 });
 
 app.post("/api/auth/register", async (req, res) => {
@@ -686,12 +776,7 @@ app.post("/api/auth/register", async (req, res) => {
 
     await connection.commit();
 
-    return res.status(201).json(ok({
-      user: toUserResponse(rows[0]),
-      session: {
-        token: `demo-${rows[0].user_id}-${Date.now()}`,
-      },
-    }));
+    return res.status(201).json(ok(issueAuthSession(rows[0])));
   } catch (error) {
     await connection.rollback();
 
@@ -727,7 +812,7 @@ app.get("/api/product-categories", async (_req, res) => {
   res.json(ok(rows));
 });
 
-app.post("/api/uploads/products", async (req, res) => {
+app.post("/api/uploads/products", authenticateToken, requireRole("SELLER"), async (req, res) => {
   const fileName = String(req.body.file_name ?? req.body.fileName ?? "").trim();
   const dataUrl = String(req.body.data_url ?? req.body.dataUrl ?? "").trim();
   const match = dataUrl.match(/^data:(image\/(?:png|jpeg|jpg|webp));base64,(.+)$/);
@@ -759,6 +844,8 @@ app.get("/api/keywords/trending", async (_req, res) => {
   const keywords = await getTrendingKeywords();
   res.json(ok(keywords));
 });
+
+app.use("/api/admin", authenticateToken, requireRole("ADMIN"));
 
 app.get("/api/admin/stores/pending", async (_req, res) => {
   const [rows] = await pool.query(
@@ -1044,7 +1131,7 @@ app.get("/api/admin/keywords", async (_req, res) => {
 app.post("/api/admin/unmapped-searches/:unmappedId/register-alias", async (req, res) => {
   const unmappedId = Number(req.params.unmappedId);
   const keywordId = Number(req.body.keyword_id ?? req.body.keywordId);
-  const adminUserId = Number(req.body.admin_user_id ?? req.body.adminUserId) || null;
+  const adminUserId = req.user.user_id;
 
   if (!unmappedId || !keywordId) {
     return res.status(400).json({ message: "unmappedId and keyword_id are required.", code: "INVALID_ALIAS_RESOLUTION_REQUEST" });
@@ -1116,7 +1203,7 @@ app.post("/api/admin/unmapped-searches/:unmappedId/register-alias", async (req, 
 app.post("/api/admin/unmapped-searches/:unmappedId/create-keyword", async (req, res) => {
   const unmappedId = Number(req.params.unmappedId);
   const keywordName = String(req.body.keyword_name ?? req.body.keywordName ?? "").trim();
-  const adminUserId = Number(req.body.admin_user_id ?? req.body.adminUserId) || null;
+  const adminUserId = req.user.user_id;
 
   if (!unmappedId || !keywordName) {
     return res.status(400).json({ message: "unmappedId and keyword_name are required.", code: "INVALID_KEYWORD_RESOLUTION_REQUEST" });
@@ -1183,7 +1270,7 @@ app.post("/api/admin/unmapped-searches/:unmappedId/create-keyword", async (req, 
 app.patch("/api/admin/unmapped-searches/:unmappedId/status", async (req, res) => {
   const unmappedId = Number(req.params.unmappedId);
   const status = String(req.body.status ?? "").trim().toUpperCase();
-  const adminUserId = Number(req.body.admin_user_id ?? req.body.adminUserId) || null;
+  const adminUserId = req.user.user_id;
   const allowedStatuses = ["PENDING", "HOLD", "REJECTED"];
 
   if (!unmappedId || !allowedStatuses.includes(status)) {
@@ -1232,7 +1319,7 @@ app.delete("/api/admin/unmapped-searches/:unmappedId", async (req, res) => {
   res.json(ok({ unmapped_id: unmappedId }, "미매핑 검색어를 삭제했습니다."));
 });
 
-app.get("/api/search", async (req, res) => {
+app.get("/api/search", optionalAuthenticateToken, async (req, res) => {
   const rawQuery = String(req.query.query ?? "").trim();
   const radiusKm = Number(req.query.radiusKm ?? 5);
 
@@ -1273,7 +1360,7 @@ app.get("/api/search", async (req, res) => {
 
   if (!hasSearchIntent) {
     await logSearch({
-      userId: req.query.userId,
+      userId: req.user?.user_id,
       rawQuery,
       keyword,
       location: null,
@@ -1330,7 +1417,7 @@ app.get("/api/search", async (req, res) => {
     });
 
   await logSearch({
-    userId: req.query.userId,
+    userId: req.user?.user_id,
     rawQuery,
     keyword,
     location,
@@ -1436,8 +1523,10 @@ app.get("/api/stores/:storeId", async (req, res) => {
   }));
 });
 
+app.use("/api/seller", authenticateToken, requireRole("SELLER"));
+
 app.get("/api/seller/stores", async (req, res) => {
-  const sellerUserId = Number(req.query.sellerId ?? req.query.seller_id);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
 
   if (sellerAccess.error) {
@@ -1460,7 +1549,7 @@ app.get("/api/seller/stores", async (req, res) => {
 });
 
 app.post("/api/seller/stores", async (req, res) => {
-  const sellerUserId = Number(req.body.seller_id ?? req.body.sellerId);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const name = String(req.body.name ?? "").trim();
   const address = String(req.body.address ?? "").trim();
@@ -1507,7 +1596,7 @@ app.post("/api/seller/stores", async (req, res) => {
 });
 
 app.patch("/api/seller/stores/:storeId", async (req, res) => {
-  const sellerUserId = Number(req.body.seller_id ?? req.body.sellerId);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const storeId = Number(req.params.storeId);
   const name = String(req.body.name ?? "").trim();
@@ -1574,7 +1663,7 @@ app.patch("/api/seller/stores/:storeId", async (req, res) => {
 });
 
 app.get("/api/seller/stores/:storeId/inventories", async (req, res) => {
-  const sellerUserId = Number(req.query.sellerId ?? req.query.seller_id);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const storeId = Number(req.params.storeId);
 
@@ -1600,7 +1689,7 @@ app.get("/api/seller/stores/:storeId/inventories", async (req, res) => {
 });
 
 app.post("/api/seller/stores/:storeId/products", async (req, res) => {
-  const sellerUserId = Number(req.body.seller_id ?? req.body.sellerId);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const storeId = Number(req.params.storeId);
   const name = String(req.body.name ?? "").trim();
@@ -1723,7 +1812,7 @@ app.post("/api/seller/stores/:storeId/products", async (req, res) => {
 });
 
 app.patch("/api/seller/stores/:storeId/products/:productId", async (req, res) => {
-  const sellerUserId = Number(req.body.seller_id ?? req.body.sellerId);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const storeId = Number(req.params.storeId);
   const productId = Number(req.params.productId);
@@ -1836,7 +1925,7 @@ app.patch("/api/seller/stores/:storeId/products/:productId", async (req, res) =>
 });
 
 app.patch("/api/seller/inventories/:inventoryId", async (req, res) => {
-  const sellerUserId = Number(req.body.seller_id ?? req.body.sellerId);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const inventoryId = Number(req.params.inventoryId);
   const totalStock = Number(req.body.total_stock ?? req.body.totalStock);
@@ -1905,7 +1994,7 @@ app.patch("/api/seller/inventories/:inventoryId", async (req, res) => {
 });
 
 app.get("/api/seller/stores/:storeId/reservations", async (req, res) => {
-  const sellerUserId = Number(req.query.sellerId ?? req.query.seller_id);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const storeId = Number(req.params.storeId);
 
@@ -1932,7 +2021,7 @@ app.get("/api/seller/stores/:storeId/reservations", async (req, res) => {
 });
 
 app.patch("/api/seller/reservations/:reservationId/status", async (req, res) => {
-  const sellerUserId = Number(req.body.seller_id ?? req.body.sellerId);
+  const sellerUserId = req.user.user_id;
   const sellerAccess = await resolveApprovedSellerProfileId(sellerUserId);
   const reservationId = Number(req.params.reservationId);
   const nextStatus = String(req.body.status ?? "").toUpperCase();
@@ -2036,8 +2125,8 @@ app.patch("/api/seller/reservations/:reservationId/status", async (req, res) => 
   }
 });
 
-app.post("/api/reservations", async (req, res) => {
-  const userId = Number(req.body.user_id ?? req.body.userId);
+app.post("/api/reservations", authenticateToken, requireRole("CONSUMER"), async (req, res) => {
+  const userId = req.user.user_id;
   const inventoryId = Number(req.body.inventory_id ?? req.body.inventoryId);
   const quantity = Number(req.body.quantity);
   const visitTime = req.body.visit_time ?? req.body.visitTime ?? null;
@@ -2128,7 +2217,12 @@ app.post("/api/reservations", async (req, res) => {
   }
 });
 
-app.get("/api/users/:userId/reservations", async (req, res) => {
+app.get("/api/users/:userId/reservations", authenticateToken, requireRole("CONSUMER"), async (req, res) => {
+  const requestedUserId = Number(req.params.userId);
+  if (requestedUserId && requestedUserId !== req.user.user_id) {
+    return res.status(403).json({ message: "본인의 예약 내역만 조회할 수 있습니다.", code: "FORBIDDEN_USER_RESERVATIONS" });
+  }
+
   const [rows] = await pool.query(
     `SELECT r.reservation_id, r.user_id, r.inventory_id, i.store_id, r.quantity, r.status,
             r.visit_time, r.request_note, r.created_at,
@@ -2139,25 +2233,26 @@ app.get("/api/users/:userId/reservations", async (req, res) => {
        JOIN products p ON p.product_id = i.product_id
       WHERE r.user_id = ?
       ORDER BY r.created_at DESC`,
-    [req.params.userId]
+    [req.user.user_id]
   );
   res.json(ok(rows));
 });
 
-app.patch("/api/reservations/:reservationId/cancel", async (req, res) => {
+app.patch("/api/reservations/:reservationId/cancel", authenticateToken, requireRole("CONSUMER"), async (req, res) => {
   const reservationId = Number(req.params.reservationId);
-  const userId = Number(req.body.user_id ?? req.body.userId) || null;
+  const userId = req.user.user_id;
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
 
     const [reservationRows] = await connection.query(
-      `SELECT reservation_id, inventory_id, quantity, status
+      `SELECT reservation_id, inventory_id, quantity, status, user_id
          FROM reservations
         WHERE reservation_id = ?
+          AND user_id = ?
         FOR UPDATE`,
-      [reservationId]
+      [reservationId, userId]
     );
 
     if (reservationRows.length === 0) {

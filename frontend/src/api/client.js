@@ -1,9 +1,13 @@
+import { clearCurrentUser, getAuthToken } from "../auth/session.js";
+
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000/api";
 
 async function request(path, options = {}) {
+  const token = getAuthToken();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     headers: {
       "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(options.headers ?? {}),
     },
     ...options,
@@ -12,6 +16,9 @@ async function request(path, options = {}) {
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    if (response.status === 401 && token) {
+      clearCurrentUser();
+    }
     const message = payload.message ?? "API 요청에 실패했습니다.";
     throw new Error(message);
   }

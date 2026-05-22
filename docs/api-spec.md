@@ -2,7 +2,7 @@
 
 Base URL: `http://localhost:4000/api`
 
-최종 수정일: 2026-05-20
+최종 수정일: 2026-05-22
 
 ## 1. 공통 규칙
 
@@ -67,9 +67,15 @@ Response:
 
 ## 3. 인증 API
 
-현재 프로토타입은 프론트엔드 `localStorage`에 `currentUser`를 저장하고, 소비자/판매자 화면에서 해당 사용자의 `user_id`를 API에 전달한다. 운영 수준의 JWT/세션 인증은 추후 전환 대상으로 둔다.
+현재 프로토타입은 로그인 성공 시 백엔드가 JWT 토큰을 발급한다. 프론트엔드는 토큰을 탭 단위 `sessionStorage`에 저장하고, 인증이 필요한 API 요청마다 `Authorization` 헤더를 전송한다.
 
-주의: 현재 seed 데이터의 `password_hash`는 실제 해시가 아니라 `pw_1` 같은 시연용 문자열이다. 발표 프로토타입에서는 같은 방식으로 비교하지만, 최종 운영 구조에서는 bcrypt/argon2 해시와 서버 세션 또는 JWT로 교체해야 한다.
+인증 헤더:
+
+```http
+Authorization: Bearer <jwt-token>
+```
+
+주의: 현재 시연용 DB의 `password_hash`는 실제 해시가 아니라 평문 시연 비밀번호를 저장한다. 발표 프로토타입에서는 같은 방식으로 비교하지만, 운영 구조에서는 bcrypt/argon2 해시로 교체해야 한다.
 
 ### POST /auth/login
 
@@ -78,7 +84,7 @@ Request:
 ```json
 {
   "login_id": "consumer1",
-  "password": "pw_1"
+  "password": "consumer1234"
 }
 ```
 
@@ -96,7 +102,9 @@ Response:
       "status": "ACTIVE"
     },
     "session": {
-      "token": "demo-2-..."
+      "token": "eyJhbGciOi...",
+      "token_type": "Bearer",
+      "expires_in": "8h"
     }
   },
   "message": "success"
@@ -106,9 +114,9 @@ Response:
 시연 계정:
 
 ```text
-소비자: consumer1 / pw_1
-판매자: seller1 / pw_6
-관리자: admin1 / pw_11
+소비자: consumer1 / consumer1234
+판매자: seller_ready / seller1234
+관리자: admin1 / admin1234
 ```
 
 ### POST /auth/register
@@ -410,7 +418,7 @@ Response:
 
 ## 6. Seller API
 
-현재 구현에서는 로그인 후 프론트엔드가 `currentUser.user_id`를 읽어 `sellerId` 또는 `seller_id`로 전달한다. 백엔드는 이 사용자 ID로 `seller_profiles.seller_id`를 조회한 뒤, 해당 판매자 프로필이 소유한 매장/재고/예약만 조회하거나 수정한다. 추후 JWT 인증으로 전환하면 query/body의 판매자 ID 대신 토큰의 사용자 ID를 기준으로 권한을 판정한다.
+Seller API는 JWT 인증이 필요하다. 백엔드는 `Authorization` 헤더의 토큰에서 `user_id`와 `role`을 검증하고, 해당 사용자와 연결된 `seller_profiles.seller_id`를 기준으로 본인 소유 매장/재고/예약만 조회하거나 수정한다. 과거 호환을 위해 일부 요청 예시에 `seller_id`가 남아 있을 수 있으나, 권한 판정의 기준은 요청 본문이 아니라 토큰이다.
 
 ### GET /seller/stores?sellerId=2
 
@@ -1117,7 +1125,7 @@ Response:
 
 ## 10. 인증과 권한 정책
 
-현재 프로토타입은 `/auth/login` 또는 `/auth/register` 응답의 `user`를 프론트엔드 `currentUser`로 보관하고, 해당 `user_id`를 예약/판매자 API에 전달한다. 단, API 명세와 코드 구조는 최종적으로 JWT 기반 인증으로 전환하기 쉽게 작성한다.
+현재 프로토타입은 `/auth/login` 또는 `/auth/register` 응답의 JWT를 프론트엔드 탭별 `sessionStorage`에 보관한다. 인증이 필요한 API는 `Authorization: Bearer <token>` 헤더를 검증하고, 백엔드는 토큰의 `user_id`와 `role`을 기준으로 권한을 판정한다.
 
 역할별 접근 규칙:
 

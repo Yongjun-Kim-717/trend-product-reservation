@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { login, register } from "../api/client.js";
-import { getRoleHome, setCurrentUser } from "../auth/session.js";
+import { getRoleHome, setCurrentSession } from "../auth/session.js";
 
 function LoginPage() {
   const navigate = useNavigate();
@@ -26,7 +26,7 @@ function LoginPage() {
         ? { role: registerRole, login_id: loginId, password, name, phone }
         : { login_id: loginId, password };
       const result = isRegisterMode ? await register(payload) : await login(payload);
-      setCurrentUser(result.user);
+      setCurrentSession(result);
       navigate(getRoleHome(result.user.role), { replace: true });
     } catch (error) {
       setErrorMessage(error.message);
@@ -42,7 +42,7 @@ function LoginPage() {
           <p className="eyebrow">Trend Product Reservation</p>
           <h1>트렌드 상품 예약</h1>
           <p>아이디로 로그인하면 계정 권한에 따라 소비자, 판매자, 관리자 화면으로 이동합니다.</p>
-          <p className="helper-text compact">시연 계정: consumer1/pw_1, seller1/pw_6, admin1/pw_11</p>
+          <p className="helper-text compact">시연 계정: consumer1/consumer1234, seller_ready/seller1234, admin1/admin1234</p>
         </div>
 
         <form className="login-form login-form-simple" onSubmit={handleSubmit}>
