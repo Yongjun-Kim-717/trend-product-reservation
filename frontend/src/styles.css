@@ -1416,6 +1416,7 @@ input:disabled {
 .alias-list span {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   min-height: 26px;
   border-radius: 999px;
   background: #f1f5f3;
@@ -1423,6 +1424,22 @@ input:disabled {
   padding: 0 9px;
   font-size: 12px;
   font-weight: 800;
+}
+
+.alias-delete-button {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: #8a3a3a;
+  cursor: pointer;
+}
+
+.alias-delete-button:hover {
+  background: #fde8e8;
 }
 
 .empty-admin-section p {

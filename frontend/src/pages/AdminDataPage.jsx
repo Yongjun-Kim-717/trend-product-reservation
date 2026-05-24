@@ -3,6 +3,7 @@ import { Check, Pause, Plus, RotateCcw, Search, Tags, Trash2, X } from "lucide-r
 import { AdminHeader } from "../components/AppHeader.jsx";
 import {
   createKeywordFromUnmapped,
+  deleteKeywordAlias,
   deleteUnmappedSearch,
   getAdminKeywords,
   getAdminSearchLogs,
@@ -72,6 +73,7 @@ function AdminDataPage() {
   const [unmappedFilter, setUnmappedFilter] = useState("PENDING");
   const [selectedUnmappedId, setSelectedUnmappedId] = useState(null);
   const [selectedKeywordId, setSelectedKeywordId] = useState("");
+  const [aliasInput, setAliasInput] = useState("");
   const [newKeywordName, setNewKeywordName] = useState("");
   const [lastAction, setLastAction] = useState("");
   const [adminError, setAdminError] = useState("");
@@ -157,6 +159,16 @@ function AdminDataPage() {
   );
 
   const selectedUnmapped = unmappedSearches.find((item) => item.unmapped_id === selectedUnmappedId) ?? filteredUnmapped[0] ?? null;
+  const selectedKeyword = keywords.find((keyword) => Number(keyword.keyword_id) === Number(selectedKeywordId));
+
+  useEffect(() => {
+    if (!selectedUnmapped) {
+      setAliasInput("");
+      return;
+    }
+
+    setAliasInput(selectedKeyword?.keyword_name ?? "");
+  }, [selectedUnmapped?.unmapped_id, selectedKeyword?.keyword_name]);
 
   const filteredKeywords = useMemo(
     () => keywords.filter((keyword) =>
@@ -236,11 +248,19 @@ function AdminDataPage() {
 
   const handleRegisterAlias = async () => {
     if (!selectedUnmapped || !selectedKeywordId || updatingId) return;
+    const alias = aliasInput.trim();
+    if (alias.length < 2 || alias.length > 20) {
+      setAdminError("별칭은 장소명을 제외한 상품어로 2~20자 사이로 입력해주세요.");
+      setLastAction("");
+      return;
+    }
+
     setUpdatingId(selectedUnmapped.unmapped_id);
 
     try {
       await registerUnmappedAlias(selectedUnmapped.unmapped_id, {
         keyword_id: Number(selectedKeywordId),
+        alias,
         admin_user_id: currentUser?.user_id,
       });
       const keyword = keywords.find((row) => Number(row.keyword_id) === Number(selectedKeywordId));
@@ -260,12 +280,19 @@ function AdminDataPage() {
       setLastAction("");
       return;
     }
+    const alias = aliasInput.trim() || newKeywordName.trim();
+    if (alias.length < 2 || alias.length > 20) {
+      setAdminError("별칭은 장소명을 제외한 상품어로 2~20자 사이로 입력해주세요.");
+      setLastAction("");
+      return;
+    }
 
     setUpdatingId(selectedUnmapped.unmapped_id);
 
     try {
       await createKeywordFromUnmapped(selectedUnmapped.unmapped_id, {
         keyword_name: newKeywordName.trim(),
+        alias,
         admin_user_id: currentUser?.user_id,
       });
       const createdName = newKeywordName.trim();
@@ -303,6 +330,22 @@ function AdminDataPage() {
     try {
       await deleteUnmappedSearch(item.unmapped_id);
       await reloadAfterAction(`"${item.raw_query}" 미매핑 검색어를 삭제했습니다.`);
+    } catch (error) {
+      setAdminError(error.message);
+    } finally {
+      setUpdatingId(null);
+    }
+  };
+
+  const handleDeleteAlias = async (alias) => {
+    if (updatingId) return;
+    const confirmed = window.confirm(`"${alias.alias}" 별칭을 삭제할까요? 이미 저장된 검색 로그는 유지됩니다.`);
+    if (!confirmed) return;
+
+    setUpdatingId(`alias-${alias.alias_id}`);
+    try {
+      await deleteKeywordAlias(alias.alias_id);
+      await reloadAfterAction(`"${alias.alias}" 별칭을 삭제했습니다.`);
     } catch (error) {
       setAdminError(error.message);
     } finally {
@@ -465,6 +508,11 @@ function AdminDataPage() {
                         {keywords.map((keyword) => <option key={keyword.keyword_id} value={keyword.keyword_id}>{keyword.keyword_name}</option>)}
                       </select>
                     </label>
+                    <label className="compact-field">
+                      별칭으로 저장할 상품어
+                      <input value={aliasInput} onChange={(event) => setAliasInput(event.target.value)} placeholder="예: 치즈케이크" />
+                    </label>
+                    <p className="helper-text compact">장소명은 제외하고 상품명 또는 상품 별칭만 입력합니다.</p>
                     <button className="ghost-button" disabled={selectedClosed || updatingId === selectedUnmapped.unmapped_id} onClick={handleRegisterAlias} type="button">
                       <Tags size={16} /> 선택 검색어를 별칭으로 등록
                     </button>
@@ -499,7 +547,24 @@ function AdminDataPage() {
                       <td>{keyword.keyword_name}</td>
                       <td>{keyword.trend_score}</td>
                       <td><span className="status-chip success">{keyword.status}</span></td>
-                      <td><div className="alias-list">{keyword.aliases.map((alias) => <span key={alias.alias_id}>{alias.alias}</span>)}</div></td>
+                      <td>
+                        <div className="alias-list">
+                          {keyword.aliases.map((alias) => (
+                            <span className="alias-item" key={alias.alias_id}>
+                              {alias.alias}
+                              <button
+                                className="alias-delete-button"
+                                disabled={updatingId === `alias-${alias.alias_id}`}
+                                onClick={() => handleDeleteAlias(alias)}
+                                title="별칭 삭제"
+                                type="button"
+                              >
+                                <X size={12} />
+                              </button>
+                            </span>
+                          ))}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

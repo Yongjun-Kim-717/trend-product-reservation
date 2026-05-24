@@ -350,6 +350,31 @@ function removeMatchedTerms(rawQuery, terms = []) {
   return remaining.replace(/\s+/g, " ").trim();
 }
 
+function normalizeAliasInput(value = "") {
+  return String(value).trim().replace(/\s+/g, " ");
+}
+
+function getAliasFromBody(req, fallbackAlias = "") {
+  return normalizeAliasInput(req.body.alias ?? req.body.aliasName ?? fallbackAlias);
+}
+
+function validateAliasInput(alias) {
+  const normalized = normalizeSearchText(alias);
+  if (normalized.length < 2 || normalized.length > 20) {
+    return "Alias must be 2 to 20 characters.";
+  }
+  return "";
+}
+
+function getUnmappedProductCandidate(rawQuery, location, matchedTerms = []) {
+  let remaining = removeMatchedTerms(rawQuery, matchedTerms);
+  if (location?.query) {
+    remaining = removeMatchedTerms(remaining, [location.query]);
+  }
+  remaining = sanitizeSearchLocationCandidate(remaining);
+  return normalizeSearchText(remaining).length >= 2 ? remaining : "";
+}
+
 function deriveLocationCandidate(rawQuery, matchedTerms = []) {
   const hasMatchedTerm = matchedTerms.filter(Boolean).length > 0;
   const remaining = removeMatchedTerms(rawQuery, matchedTerms);
@@ -1133,13 +1158,35 @@ app.get("/api/admin/keywords", async (_req, res) => {
   res.json(ok(Array.from(keywordMap.values())));
 });
 
+app.delete("/api/admin/keyword-aliases/:aliasId", async (req, res) => {
+  const aliasId = Number(req.params.aliasId);
+
+  if (!aliasId) {
+    return res.status(400).json({ message: "valid aliasId is required.", code: "INVALID_ALIAS_DELETE_REQUEST" });
+  }
+
+  const [result] = await pool.query(
+    `DELETE FROM keyword_aliases
+      WHERE alias_id = ?`,
+    [aliasId]
+  );
+
+  if (result.affectedRows !== 1) {
+    return res.status(404).json({ message: "Keyword alias was not found.", code: "KEYWORD_ALIAS_NOT_FOUND" });
+  }
+
+  res.json(ok({ alias_id: aliasId }));
+});
+
 app.post("/api/admin/unmapped-searches/:unmappedId/register-alias", async (req, res) => {
   const unmappedId = Number(req.params.unmappedId);
   const keywordId = Number(req.body.keyword_id ?? req.body.keywordId);
   const adminUserId = req.user.user_id;
+  const alias = getAliasFromBody(req);
+  const aliasError = validateAliasInput(alias);
 
-  if (!unmappedId || !keywordId) {
-    return res.status(400).json({ message: "unmappedId and keyword_id are required.", code: "INVALID_ALIAS_RESOLUTION_REQUEST" });
+  if (!unmappedId || !keywordId || aliasError) {
+    return res.status(400).json({ message: aliasError || "unmappedId and keyword_id are required.", code: "INVALID_ALIAS_RESOLUTION_REQUEST" });
   }
 
   const connection = await pool.getConnection();
@@ -1178,7 +1225,7 @@ app.post("/api/admin/unmapped-searches/:unmappedId/register-alias", async (req, 
       `INSERT INTO keyword_aliases (keyword_id, alias, alias_normalized)
        VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE keyword_id = VALUES(keyword_id)`,
-      [keywordId, unmappedRows[0].raw_query, unmappedRows[0].raw_query_normalized]
+      [keywordId, alias, normalizeSearchText(alias)]
     );
 
     await connection.query(
@@ -1209,9 +1256,11 @@ app.post("/api/admin/unmapped-searches/:unmappedId/create-keyword", async (req, 
   const unmappedId = Number(req.params.unmappedId);
   const keywordName = String(req.body.keyword_name ?? req.body.keywordName ?? "").trim();
   const adminUserId = req.user.user_id;
+  const alias = getAliasFromBody(req, keywordName);
+  const aliasError = validateAliasInput(alias);
 
-  if (!unmappedId || !keywordName) {
-    return res.status(400).json({ message: "unmappedId and keyword_name are required.", code: "INVALID_KEYWORD_RESOLUTION_REQUEST" });
+  if (!unmappedId || !keywordName || aliasError) {
+    return res.status(400).json({ message: aliasError || "unmappedId and keyword_name are required.", code: "INVALID_KEYWORD_RESOLUTION_REQUEST" });
   }
 
   const connection = await pool.getConnection();
@@ -1242,7 +1291,7 @@ app.post("/api/admin/unmapped-searches/:unmappedId/create-keyword", async (req, 
       `INSERT INTO keyword_aliases (keyword_id, alias, alias_normalized)
        VALUES (?, ?, ?)
        ON DUPLICATE KEY UPDATE keyword_id = VALUES(keyword_id)`,
-      [keywordResult.insertId, unmappedRows[0].raw_query, unmappedRows[0].raw_query_normalized]
+      [keywordResult.insertId, alias, normalizeSearchText(alias)]
     );
 
     await connection.query(
@@ -1348,6 +1397,9 @@ app.get("/api/search", optionalAuthenticateToken, async (req, res) => {
     fallbackLabel: String(req.query.locationLabel ?? "좌표 기준 위치").trim() || "좌표 기준 위치",
   });
   const hasSearchIntent = Boolean(keyword.keyword_id || product.product_id || category.category_id || location);
+  const unknownProductCandidate = location && !keyword.keyword_id && !product.product_id && !category.category_id
+    ? getUnmappedProductCandidate(rawQuery, location, matchedTerms)
+    : "";
 
   const params = [];
   let productWhere = "";
@@ -1374,6 +1426,19 @@ app.get("/api/search", optionalAuthenticateToken, async (req, res) => {
     });
 
     return res.json(ok({ location: null, keyword, product, category, radius_km: radiusKm, stores: [] }));
+  }
+
+  if (unknownProductCandidate) {
+    await logSearch({
+      userId: req.user?.user_id,
+      rawQuery,
+      keyword,
+      location,
+      resultCount: 0,
+      mapped: false,
+    });
+
+    return res.json(ok({ location, keyword, product, category, radius_km: radiusKm, stores: [] }));
   }
 
   const [rows] = await pool.query(

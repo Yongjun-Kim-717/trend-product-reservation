@@ -239,3 +239,9 @@ export function deleteUnmappedSearch(unmappedId) {
     method: "DELETE",
   });
 }
+
+export function deleteKeywordAlias(aliasId) {
+  return request(`/admin/keyword-aliases/${aliasId}`, {
+    method: "DELETE",
+  });
+}
