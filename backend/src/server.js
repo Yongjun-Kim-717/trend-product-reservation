@@ -1405,8 +1405,16 @@ app.get("/api/search", optionalAuthenticateToken, async (req, res) => {
   let productWhere = "";
 
   if (keyword.keyword_id) {
-    productWhere = "AND p.name = ?";
-    params.push(keyword.keyword_name);
+    productWhere = `AND (
+          REPLACE(LOWER(p.name), ' ', '') = REPLACE(LOWER(?), ' ', '')
+          OR EXISTS (
+            SELECT 1
+              FROM keyword_aliases ka
+             WHERE ka.keyword_id = ?
+               AND ka.alias_normalized = REPLACE(LOWER(p.name), ' ', '')
+          )
+        )`;
+    params.push(keyword.keyword_name, keyword.keyword_id);
   } else if (product.product_id) {
     productWhere = "AND p.product_id = ?";
     params.push(product.product_id);
